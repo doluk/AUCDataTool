@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <numbers>
 
 namespace auc::mwl {
 
@@ -255,6 +256,18 @@ IoResult parseMwrsHeader(const QByteArray& head, qint64 fileSize, const MwrsRunI
     return {};
 }
 
+/// ω²t is stored divided by 10000 according to the LabVIEW reader, but files written by
+/// later acquisition versions store it divided by 1000. The factor that keeps ω²t at or
+/// below its upper bound ω²·t (constant speed from t = 0) is used.
+static double mwOmega2t(quint32 raw, double rpm, double seconds)
+{
+    const double w = rpm * std::numbers::pi / 30.0;
+    const double bound = w * w * seconds * 1.02;
+    const double v = double(raw) * 10000.0;
+    if (bound > 0 && v > bound && double(raw) * 1000.0 <= bound) return double(raw) * 1000.0;
+    return v;
+}
+
 IoResult parseMwHeader(const QByteArray& head, qint64 fileSize, ScanHeader& out)
 {
     // Try v1.2 first (it has an explicit value format), accept the layout whose implied
@@ -279,8 +292,9 @@ IoResult parseMwHeader(const QByteArray& head, qint64 fileSize, ScanHeader& out)
             h.rpm = r.u16();     // stored as I16 but used as U16 (speeds > 32767 rpm)
             h.setRpm = r.u16();
             h.temperature = r.i16() / 10.0;
-            h.omega2t = double(r.u32()) * 10000.0;
+            const quint32 w2t = r.u32();
             h.seconds = r.i32();
+            h.omega2t = mwOmega2t(w2t, h.rpm, h.seconds);
             h.points = r.u16();
             h.rStart = r.u16() / 1000.0;
             const double rEnd = r.u16() / 1000.0;
@@ -314,8 +328,9 @@ IoResult parseMwHeader(const QByteArray& head, qint64 fileSize, ScanHeader& out)
     h.description = QString::fromLatin1(r.bytes(64)).trimmed().remove(QChar(0));
     h.rpm = r.u16();  // stored as I16 but used as U16
     h.temperature = r.i16() / 10.0;
-    h.omega2t = double(r.u32()) * 10000.0;
+    const quint32 w2t = r.u32();
     h.seconds = r.i32();
+    h.omega2t = mwOmega2t(w2t, h.rpm, h.seconds);
     h.points = r.u16();
     h.rStart = r.u16() / 1000.0;
     const double rEnd = r.u16() / 1000.0;

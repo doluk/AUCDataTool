@@ -12,7 +12,8 @@ Targets Windows, macOS and Linux; the UI is Qt Quick so an Android build is poss
 | Area | State |
 |---|---|
 | openAUC `.auc` reader/writer (v4, v5, stddev, interpolation bitmap, CRC); multi-wavelength `.auc` sets grouped per cell/channel | done |
-| Multi-wavelength `.mwrs` (v1.0–1.4, with run XML) and `.mw` (v1.0/1.1, v1.2 with dark current) | done — layouts recovered from the LabVIEW program, **not yet validated on real files** |
+| Multi-wavelength `.mwrs` (v1.0–1.4, with run XML) and `.mw`/`.MW1`…`.MW8` (v1.0/1.1, v1.2 with dark current) | done — `.mwrs` 1.3 and `.mw` 1.0 validated on real runs (see below) |
+| Beckman XL ASCII `.RA/.RI/.IP/.FI/.WA/.WI` (XL-A/XL-I, Optima and UltraScan exports); wavelength folders (`2A280`, `2A230`) combined; sample + reference intensity columns | done |
 | Lazy wavelength slices (runs of 8 cells × 2 channels × 600+ λ never loaded completely) | done |
 | Wavelength selection, multi-wavelength averaging (MWA) over a λ range | done |
 | Intensity ↔ absorbance with a reference channel (scan by scan or mean of reference scans) | done |
@@ -23,14 +24,17 @@ Targets Windows, macOS and Linux; the UI is Qt Quick so an Android build is poss
 | Radial integration (∫A dr, ∫A·r dr) + integral-vs-time plot | done |
 | TI/RI noise: load UltraScan noise XML or plain text | done |
 | Live mode: follow a folder while the run is acquiring (new scans, new cells) | done |
-| CSV export | done |
-| XL `.RA/.RI/.WA/.WI/.IP` text files, 3D view (radius × λ), spectrum plot | pending |
-| Beckman / Origin / US3 export, printing | pending |
+| Spectra: all scans against λ at a radius (draggable), with absorbance/dark current | done |
+| 3D surface (Qt Graphs): radius × λ of one scan, or radius × time | done |
+| Export: CSV, Origin ASCII, Beckman XL, UltraScan III `.auc` — current view or a λ range | done |
+| Print graph, save graph (PNG, PDF) | done |
 
 ## Build
 
-Requirements: CMake ≥ 3.21, a C++20 compiler, Qt ≥ 6.4 (Qt 6.8 LTS recommended) with
-Quick, QuickControls2 and Concurrent.
+Requirements: CMake ≥ 3.21, a C++20 compiler, Qt ≥ 6.8 with Quick, QuickControls2 and
+Concurrent. Optional: Qt Graphs (with Quick 3D) for the 3D surface view, Widgets + Print
+Support for printing; without them the app builds without these features
+(`-DAUC_WITH_GRAPHS=OFF`, `-DAUC_WITH_PRINT=OFF` to switch them off explicitly).
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -39,8 +43,12 @@ ctest --test-dir build --output-on-failure
 ./build/app/AUCDataTool path/to/run/         # files or folders
 ```
 
-With [vcpkg](https://vcpkg.io), Qt is taken from the `vcpkg.json` manifest:
-`cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake`.
+With [vcpkg](https://vcpkg.io), Qt is installed from the `vcpkg.json` manifest when CMake
+configures: set `VCPKG_ROOT` (the toolchain file is then picked up automatically) or pass
+`-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake`. The first configure
+builds Qt and takes a while; the packages land in `build/vcpkg_installed`. A build tree that
+was configured in classic mode keeps `VCPKG_MANIFEST_MODE=OFF` – delete its `CMakeCache.txt`
+(CLion: *Reset Cache and Reload Project*).
 
 Options: `-DAUC_BUILD_APP=OFF` builds only the core library, tools and tests (needs only Qt Core).
 
@@ -56,7 +64,7 @@ workflow artifacts and attaches them to a GitHub release when a `v*` tag is push
 ### Tools
 
 - `aucinfo PATH… [--bench]` — summary of every channel in files/folders (`.auc`, `.mwrs`,
-  `.mw`); `--bench` times opening and wavelength-slice reads.
+  `.mw`, XL); `--bench` times opening and wavelength-slice reads.
 - `aucgen OUTDIR [--scans N --points N --cells N …]` — synthetic single-wavelength
   sedimentation-velocity data (`.auc`) with TI/RI noise, plus the noise as UltraScan XML.
 - `mwlgen OUTDIR [--cells N --scans N --wavelengths N --points N --version 1.2|1.3|1.4]` —
@@ -69,10 +77,14 @@ workflow artifacts and attaches them to a GitHub release when a `v*` tag is push
 ```
 AUCDataTool [files/folders] [--watch FOLDER] [--set key=value …]
             [--ti-noise FILE] [--ri-noise FILE]
-            [--screenshot out.png [--screenshot-delay ms]] [--benchmark N]
+            [--export csv|origin|beckman|us3=PATH [--export-wavelengths FROM:TO[:STEP]]]
+            [--screenshot out.png | --save-graph out.pdf] [--screenshot-delay ms] [--benchmark N]
 ```
 `--watch` opens a folder in live mode. `--set` applies view/processing options, e.g.
-`--set wavelengthIndex=60 --set displayMode=0 --set integrate=true`.
+`--set wavelengthIndex=60 --set displayMode=0 --set integrate=true --set showSpectrum=true`.
+`--export` writes the processed data of the first channel (with all `--set` options) and
+quits, e.g. absorbance at 260–280 nm, every 2nd wavelength, as UltraScan files:
+`AUCDataTool run/ --export us3=out/ --export-wavelengths 260:280:2`.
 
 ## Working with multi-wavelength data
 
@@ -87,7 +99,31 @@ AUCDataTool [files/folders] [--watch FOLDER] [--set key=value …]
   - *Mean of reference scans*: every scan against the mean of reference scans *k…m*.
   - A = −log₁₀(I/I₀) where I and I₀ exceed 100 counts; other points are set to 3.0
     (as in the LabVIEW program).
+- **Spectra.** *Show spectra at a radius* adds a plot of all selected scans against
+  wavelength, averaged over r ± Δr. Drag the green marker in the scan plot to move the radius
+  and the orange marker in the spectrum plot to change the wavelength. Absorbance, the
+  reference mode, dark current and the scan selection apply as in the scan plot. Spectra
+  read every scan file completely (a 350-scan × 202-λ run: about 0.2 s, then cached).
+- **3D surface** (tab *3D surface*, Qt Graphs): *radius × wavelength* of one scan
+  (slider) or *radius × time* of the processed scans at the current wavelength. Drag to
+  rotate, wheel to zoom, click for the value. The grid is reduced to at most 400 × 300 points.
 - Settings (wavelength, reference, display) are remembered per channel.
+
+## Export and printing
+
+*Export…* writes the processed data as shown (reference, scan selection, noise, spike
+filter, offset), for the current wavelength (or MWA range) or every n-th wavelength of a range:
+
+| Format | Output |
+|---|---|
+| CSV | one file: radius column + one column per scan (Excel) |
+| Origin ASCII | tab-separated, header rows *Long Name*, *Units*, *Comments* (scan, time) |
+| Beckman XL | one file per scan, `2A280/A00012.RA2` — the XL/UltraScan export layout |
+| UltraScan III | `run.RA.2.A.280.auc` (openAUC) per cell/channel/wavelength; NaN points flagged as interpolated |
+
+Several wavelengths go to separate files (`name_280nm.csv`) or folders. *Print…* (Ctrl+P)
+and *Save graph…* (PNG, JPEG, or PDF page with the run information) take the visible plots
+or the 3D surface.
 
 **Performance** (synthetic run, 8 cells × 2 channels × 600 λ × 50 scans × 800 points =
 1.5 GB, 800 files; Linux, warm file cache): opening 160 ms; one wavelength slice
@@ -97,16 +133,18 @@ AUCDataTool [files/folders] [--watch FOLDER] [--set key=value …]
 ## Architecture
 
 ```
-core/   auccore – Qt Core only, no GUI. File formats, lazy channel sources, processing,
-        noise, folder watcher.
-app/    Qt Quick application. ScanPlot (scene-graph item), AppController, QML UI.
+core/   auccore – Qt Core only, no GUI. File formats (openAUC, MWL, XL), lazy channel
+        sources, processing, noise, exporters, folder watcher.
+app/    Qt Quick application. ScanPlot (scene-graph item), AppController, QML UI,
+        SurfaceFeeder (Qt Graphs surface).
 tools/  aucinfo, aucgen, mwlgen
 tests/  Qt Test unit tests for the core
 ```
 
 **Data access.** `auc::openData()` groups files into `ChannelSource`s (one per cell/channel):
-`.mwrs`/`.mw` one file per scan, `.auc` one file per wavelength. A wavelength slice reads one
-radius row from each scan file (seek + read); recent slices are cached.
+`.mwrs`/`.mw` and XL one file per scan, `.auc` one file per wavelength. A wavelength slice
+reads one radius row from each scan file (seek + read; XL text files are parsed and
+interpolated); recent slices are cached. Spectra and the radius × λ surface read whole scans.
 
 **Plot.** All scans are uploaded once as coloured line segments in data coordinates
 (chunked at 65 534 vertices per scene-graph node) inside their own render layer. Zoom and
@@ -115,7 +153,8 @@ LabVIEW viewer recoloured and redrew every plot through separate property-node c
 
 **Processing** runs on a worker thread (`QtConcurrent`) — including the file reads of a
 slice; option changes during a run are coalesced. Order: wavelength slice → dark current
-→ absorbance → noise → scan selection → reverse → spike filter → offset → integration.
+→ absorbance → noise → scan selection → reverse → spike filter → offset → integration;
+spectra and the surface are computed in the same pass when shown.
 
 ## Algorithms recovered from the LabVIEW program
 
@@ -145,6 +184,18 @@ absorbance conversion.
 
 ## File formats
 
+**XL ASCII** (`.RA1`, `.RI2`, `.IP3`, `.FI1`, `.WA1`, `.WI1`; one file per scan): line 1
+description (`cm/pixel: …, description` for interference), line 2
+`type cell T rpm seconds ω²t λ replicates`, then `x value [third column]`. The header letter
+(R, I, P, F, W) decides the type — some exports use `.RI` for absorbance. For intensity
+files of double-sector cells the second column is the sample and the third the reference
+intensity (A = log₁₀(I_ref/I_sample); checked against the matching `.ra2` files), so they
+become two channels (A and B, or the file's letter and R) and absorbance works as for MWL
+data. XL radii are not equidistant and differ between scans; each channel uses the
+equidistant grid of its first scan and interpolates every scan onto it (NaN outside a
+scan's range). The channel letter comes from the file name (`A00012.RA2`) or the folder
+(`2A280`); wavelength folders of one run are grouped into one channel.
+
 All MWL values are big-endian. Layouts were recovered from the LabVIEW program
 (`sub_fileIO_header_reader`, `data reader bi2I32`, `file_io data reader`,
 `sub_fileIO_read_xml_file`) and cross-checked with UltraScan III (`US_MwlData`).
@@ -172,9 +223,11 @@ All MWL values are big-endian. Layouts were recovered from the LabVIEW program
 Scaling of readings: v1.0–1.2 ÷ 1000; v1.3 × 1; v1.4 ÷ 10000 for absorbance runs
 (`take_intensity="N"`), × 1 for intensity runs.
 
-**`.mw`** — one file per scan. v1.0/1.1: 100-byte header (magic, version, date, cell,
-channel, scan, 64-char description, speed, T × 10, ω²t/10000 as u32, time, points,
-r start/end × 1000, nλ), λ as i16 (nm × 10), readings i32. v1.2: 115-byte header adding
+**`.mw`** — one file per scan, extension `.mw` or `.MW<cell>`. v1.0/1.1: 100-byte header
+(magic, version, date, cell, channel, scan, 64-char description, speed, T × 10, ω²t as u32,
+time, points, r start/end × 1000, nλ), λ as i16 (nm × 10), readings i32. ω²t is stored
+÷10000 according to the LabVIEW reader but ÷1000 by later acquisition versions; the factor
+that keeps ω²t ≤ ω²·t is used. v1.2: 115-byte header adding
 value size/type (u16/u32, i16/i32, f32), a dark-subtracted flag, start time, duration,
 replicates and set speed, followed by λ, one dark-current value per wavelength, readings.
 
@@ -182,13 +235,18 @@ replicates and set speed, followed by λ, one dark-current value per wavelength,
 between stored min/max, optional stddev, interpolation bitmap (MSB first), trailing
 CRC-32 (zlib polynomial, seeded with 0xFFFFFFFF). v4 stores λ as (λ − 180)·100, v5 as λ·10.
 
-### To be confirmed with real files
+### Validation with real files
 
-- **`.mwrs` v1.0**: LabVIEW reads nλ as i32 and λ as u32 (nm × 10), UltraScan reads u16
-  and u16 (nm). Both layouts are accepted; the one matching the file size is used.
-- **`.mwrs` v1.1+ speeds**: LabVIEW reads rotor speed at offset 4 and set speed at 6,
-  UltraScan the reverse. LabVIEW's order is used.
-- **`.mw`** v1.0 vs v1.2 is detected from the file size.
+- **`.mwrs` v1.3** (run 1844, 202 λ): readings, rotor speed at offset 4, set speed at 6,
+  ω²t and time agree exactly with the XL `.RI2` files the LabVIEW viewer exported from
+  the same run (`1844_Cell2_500nm_Intensity`).
+- **`.mw` v1.0** (`A001.MW3`): header, λ table and time agree with the `.mwrs` files of the
+  same run; ω²t is stored ÷1000 (see above).
+- **Scaling of "1.3" intensity runs**: some runs whose XML says 1.3 store intensities
+  ×10000 (like v1.4 absorbance). Detector counts stay far below 5·10⁶, so a mid-spectrum
+  row maximum above that selects ÷10000; the format column then shows "(÷10000)".
+- Still unconfirmed: `.mwrs` v1.0 (LabVIEW reads nλ as i32 and λ as u32 nm × 10,
+  UltraScan u16/u16 nm — the layout matching the file size is used) and `.mw` v1.2.
 
 ## License
 

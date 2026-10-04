@@ -5,11 +5,83 @@
   "description": "Viewer for analytical ultracentrifugation raw data",
   "homepage": "https://github.com/doluk/AUCDataTool",
   "license": "LGPL-3.0-or-later",
+  "builtin-baseline": "a44707152fabbedcf1c17fe80d7bfb7d9370d8d5",
   "dependencies": [
     {
       "name": "qtbase",
-      "features": ["concurrent", "gui", "testlib"]
+      "default-features": false,
+      "features": [
+        "concurrent",
+        "gui",
+        "widgets",
+        "network",
+        "testlib",
+        "thread",
+        "freetype",
+        "harfbuzz",
+        "png",
+        "jpeg",
+        "doubleconversion",
+        "pcre2",
+        "zstd",
+        {
+          "name": "opengl",
+          "platform": "!ios"
+        },
+        {
+          "name": "dbus",
+          "platform": "linux"
+        },
+        {
+          "name": "fontconfig",
+          "platform": "linux"
+        },
+        {
+          "name": "egl",
+          "platform": "linux | android"
+        },
+        {
+          "name": "xcb",
+          "platform": "linux"
+        },
+        {
+          "name": "xcb-xlib",
+          "platform": "linux"
+        },
+        {
+          "name": "xrender",
+          "platform": "linux"
+        },
+        {
+          "name": "gles2",
+          "platform": "android"
+        }
+      ]
     },
-    "qtdeclarative"
+    "qtdeclarative",
+    {
+      "name": "qtgraphs",
+      "version>=": "6.10.1"
+    },
+    {
+      "name": "qt3d",
+      "version>=": "6.10.1"
+    },
+    {
+      "name": "qtcharts",
+      "version>=": "6.10.1"
+    },
+    {
+      "name": "qtquick3d",
+      "version>=": "6.10.1"
+    },
+    {
+      "name": "qtquick3dphysics",
+      "version>=": "6.10.1"
+    },
+    {
+      "name": "qtsvg",
+      "version>=": "6.10.1"
+    }
   ]
 }

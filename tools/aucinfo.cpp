@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Lukas Dobler
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// aucinfo – summarise AUC data (.auc, .mwrs, .mw files or folders); optionally time reads.
+// aucinfo – summarise AUC data (.auc, .mwrs, .mw, XL .RA/.RI/.IP files or folders); optionally time reads.
 #include "auc/Channel.h"
 
 #include <QCommandLineParser>
@@ -30,7 +30,8 @@ int main(int argc, char** argv)
 
     for (const auto& c : res.channels) {
         out << c->runId << "  cell " << c->cell << " channel " << c->channel << "  (" << c->formatName << ", "
-            << (c->absorbanceData ? "absorbance" : "intensity") << ")\n";
+            << (!c->valueLabel.isEmpty() ? c->valueLabel : c->absorbanceData ? QStringLiteral("absorbance") : QStringLiteral("intensity"))
+            << ")\n";
         if (!c->description.isEmpty()) out << "  sample      " << c->description << "\n";
         out << "  folder      " << c->folder << "\n";
         if (!c->wavelengths.empty())

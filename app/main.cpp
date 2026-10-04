@@ -7,8 +7,12 @@
 
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFileInfo>
 #include <QElapsedTimer>
 #include <QGuiApplication>
+#ifdef AUC_HAVE_PRINT
+#include <QApplication>
+#endif
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -45,7 +49,11 @@ PlotSeriesPtr benchmarkSeries(int scans, int points)
 
 int main(int argc, char** argv)
 {
+#ifdef AUC_HAVE_PRINT
+    QApplication app(argc, argv);  // the print dialog is a widget
+#else
     QGuiApplication app(argc, argv);
+#endif
     app.setOrganizationName(QStringLiteral("AG Coelfen"));
     app.setApplicationName(QStringLiteral("AUCDataTool"));
     app.setApplicationVersion(QStringLiteral(PROJECT_VERSION));
@@ -54,7 +62,7 @@ int main(int argc, char** argv)
     parser.setApplicationDescription(QStringLiteral("Viewer for analytical ultracentrifugation data"));
     parser.addHelpOption();
     parser.addVersionOption();
-    parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral(".auc files or folders to open"), QStringLiteral("[files...]"));
+    parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("Data files (.auc, .mwrs, .mw, XL .RA/.RI/.IP) or folders to open"), QStringLiteral("[files...]"));
     const QCommandLineOption shotOpt(QStringLiteral("screenshot"), QStringLiteral("Save a window screenshot and quit."), QStringLiteral("png"));
     const QCommandLineOption benchOpt(QStringLiteral("benchmark"),
                                       QStringLiteral("Render N synthetic scans, report frame times and quit."), QStringLiteral("scans"));
@@ -66,7 +74,17 @@ int main(int argc, char** argv)
     const QCommandLineOption riOpt(QStringLiteral("ri-noise"), QStringLiteral("RI noise file for the first data file."), QStringLiteral("file"));
     const QCommandLineOption watchOpt(QStringLiteral("watch"), QStringLiteral("Open a folder and follow new scans (live mode)."), QStringLiteral("folder"));
     const QCommandLineOption delayOpt(QStringLiteral("screenshot-delay"), QStringLiteral("Delay before --screenshot (ms, default 2500)."), QStringLiteral("ms"), QStringLiteral("2500"));
-    parser.addOptions({shotOpt, benchOpt, sizeOpt, setOpt, tiOpt, riOpt, watchOpt, delayOpt});
+    const QCommandLineOption exportOpt(QStringLiteral("export"),
+                                       QStringLiteral("Export the processed data and quit; FORMAT is csv, origin, beckman or us3 "
+                                                      "(PATH: a file for csv/origin, a folder otherwise)."),
+                                       QStringLiteral("FORMAT=PATH"));
+    const QCommandLineOption exportAllOpt(QStringLiteral("export-wavelengths"),
+                                          QStringLiteral("With --export: every STEP-th wavelength in FROM–TO nm."),
+                                          QStringLiteral("FROM:TO[:STEP]"));
+    const QCommandLineOption saveGraphOpt(QStringLiteral("save-graph"),
+                                          QStringLiteral("Save the window as a graph page (.pdf, .png) after --screenshot-delay and quit."),
+                                          QStringLiteral("file"));
+    parser.addOptions({shotOpt, benchOpt, sizeOpt, setOpt, tiOpt, riOpt, watchOpt, delayOpt, exportOpt, exportAllOpt, saveGraphOpt});
     parser.process(app);
 
 #ifdef Q_OS_ANDROID
@@ -132,6 +150,41 @@ int main(int argc, char** argv)
             *phase = 1;
             timer->start();
             plot->setSeries(series);
+        });
+    }
+
+    if (parser.isSet(exportOpt) && controller) {
+        static const QStringList formats{QStringLiteral("csv"), QStringLiteral("origin"), QStringLiteral("beckman"), QStringLiteral("us3")};
+        const QString spec = parser.value(exportOpt);
+        const qsizetype eq = spec.indexOf(QLatin1Char('='));
+        const int format = int(formats.indexOf(spec.left(eq).toLower()));
+        if (eq <= 0 || format < 0) {
+            std::fprintf(stderr, "--export: expected FORMAT=PATH with FORMAT one of %s\n", qPrintable(formats.join(QStringLiteral(", "))));
+            return 2;
+        }
+        const QStringList range = parser.value(exportAllOpt).split(QLatin1Char(':'));
+        const bool all = parser.isSet(exportAllOpt);
+        QObject::connect(controller, &AppController::exportFinished, &app, [](bool ok, const QString& msg) {
+            std::printf("%s\n", qPrintable(msg));
+            QCoreApplication::exit(ok ? 0 : 1);
+        });
+        const QUrl target = QUrl::fromLocalFile(QFileInfo(spec.mid(eq + 1)).absoluteFilePath());
+        QTimer::singleShot(0, controller, [=]() {
+            controller->exportData(format, target, all, range.value(0).toDouble(), range.value(1).toDouble(),
+                                   range.value(2, QStringLiteral("1")).toInt());
+            if (!controller->exporting()) {  // nothing started (no data, empty range)
+                std::fprintf(stderr, "%s\n", qPrintable(controller->status()));
+                QCoreApplication::exit(1);
+            }
+        });
+    }
+
+    if (parser.isSet(saveGraphOpt) && controller) {
+        const QString out = QFileInfo(parser.value(saveGraphOpt)).absoluteFilePath();
+        QTimer::singleShot(parser.value(delayOpt).toInt(), window, [window, controller, out]() {
+            const bool ok = controller->saveImage(window->grabWindow(), QUrl::fromLocalFile(out), controller->runInfo());
+            std::printf("graph %s: %s\n", qPrintable(out), ok ? "ok" : "FAILED");
+            QCoreApplication::exit(ok ? 0 : 1);
         });
     }
 

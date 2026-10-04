@@ -3,25 +3,57 @@
 
 find_package(Qt6 REQUIRED COMPONENTS Gui Quick QuickControls2 Concurrent)
 
+# Optional: Qt Graphs for the 3D surface view, Qt Print Support (with Widgets, for the
+# print dialog) for printing. Without them the app builds without these features.
+option(AUC_WITH_GRAPHS "3D surface view (needs Qt Graphs)" ON)
+option(AUC_WITH_PRINT "Printing (needs Qt Print Support)" ON)
+if(AUC_WITH_GRAPHS)
+    find_package(Qt6 QUIET COMPONENTS Graphs)
+endif()
+if(AUC_WITH_PRINT AND NOT ANDROID AND NOT IOS)
+    find_package(Qt6 QUIET COMPONENTS Widgets PrintSupport)
+endif()
+set(AUC_HAVE_GRAPHS ${Qt6Graphs_FOUND})
+if(Qt6PrintSupport_FOUND AND Qt6Widgets_FOUND)
+    set(AUC_HAVE_PRINT TRUE)
+else()
+    set(AUC_HAVE_PRINT FALSE)
+endif()
+message(STATUS "AUCDataTool: 3D surface ${AUC_HAVE_GRAPHS}, printing ${AUC_HAVE_PRINT}")
+
 qt_add_executable(aucdatatool WIN32 MACOSX_BUNDLE
     main.cpp
 )
 
+set(auc_qml_files
+    qml/Main.qml
+    qml/PlotView.qml
+    qml/FileList.qml
+    qml/OptionsPanel.qml
+    qml/ColorBar.qml
+    qml/ExportDialog.qml
+)
+set(auc_sources
+    AppController.h AppController.cpp
+    ScanPlot.h ScanPlot.cpp
+    PlotSeries.h
+    SurfaceGrid.h
+    CurveStyle.h
+    Colormap.h Colormap.cpp
+)
+set(auc_qml_dependencies QtQuick)
+if(AUC_HAVE_GRAPHS)
+    list(APPEND auc_qml_files qml/SurfaceView.qml)
+    list(APPEND auc_sources SurfaceFeeder.h SurfaceFeeder.cpp)
+    list(APPEND auc_qml_dependencies QtGraphs)
+endif()
+
 qt_add_qml_module(aucdatatool
     URI Auc.DataTool
     VERSION 1.0
-    QML_FILES
-        qml/Main.qml
-        qml/PlotView.qml
-        qml/FileList.qml
-        qml/OptionsPanel.qml
-        qml/ColorBar.qml
-    SOURCES
-        AppController.h AppController.cpp
-        ScanPlot.h ScanPlot.cpp
-        PlotSeries.h
-        CurveStyle.h
-        Colormap.h Colormap.cpp
+    QML_FILES ${auc_qml_files}
+    SOURCES ${auc_sources}
+    DEPENDENCIES ${auc_qml_dependencies}
 )
 
 target_compile_definitions(aucdatatool PRIVATE PROJECT_VERSION="${PROJECT_VERSION}")
@@ -32,6 +64,14 @@ target_link_libraries(aucdatatool PRIVATE
     Qt6::QuickControls2
     Qt6::Concurrent
 )
+if(AUC_HAVE_GRAPHS)
+    target_compile_definitions(aucdatatool PRIVATE AUC_HAVE_GRAPHS)
+    target_link_libraries(aucdatatool PRIVATE Qt6::Graphs)
+endif()
+if(AUC_HAVE_PRINT)
+    target_compile_definitions(aucdatatool PRIVATE AUC_HAVE_PRINT)
+    target_link_libraries(aucdatatool PRIVATE Qt6::Widgets Qt6::PrintSupport)
+endif()
 
 set_target_properties(aucdatatool PROPERTIES
     OUTPUT_NAME "AUCDataTool"

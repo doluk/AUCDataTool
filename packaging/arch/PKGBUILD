@@ -11,7 +11,7 @@ pkgdesc="Viewer for analytical ultracentrifugation raw data"
 arch=('x86_64' 'aarch64')
 url="https://github.com/doluk/AUCDataTool"
 license=('LGPL-3.0-or-later')
-depends=('qt6-base' 'qt6-declarative')
+depends=('qt6-base' 'qt6-declarative' 'qt6-graphs' 'qt6-quick3d')
 makedepends=('cmake' 'ninja')
 options=('!debug')
 

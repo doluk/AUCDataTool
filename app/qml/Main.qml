@@ -24,15 +24,26 @@ ApplicationWindow {
         id: ctrl
         scanPlot: scanView.plot
         integralPlot: integralView.plot
+        spectrumPlot: spectrumView.plot
+        surfaceActive: viewTabs.currentIndex === 1
         onProcessed: (ms) => win.lastProcessMs = ms
+        // --set surfaceActive=true on the command line opens the tab.
+        onSurfaceSettingsChanged: if (surfaceActive && surfaceSupported) viewTabs.currentIndex = 1
+    }
+
+    // Grabs the visible graph area (scan/spectrum/integral plots or the 3D surface).
+    function grabGraph(callback) {
+        const item = viewStack.currentIndex === 1 && surfaceLoader.item ? surfaceLoader.item : plotArea
+        item.grabToImage(callback, Qt.size(item.width * 2, item.height * 2))
     }
 
     FileDialog {
         id: fileDialog
         title: qsTr("Open data files")
         fileMode: FileDialog.OpenFiles
-        nameFilters: [qsTr("AUC data (*.auc *.mwrs *.mw)"), qsTr("openAUC (*.auc)"),
-                      qsTr("Multi-wavelength (*.mwrs *.mw)"), qsTr("All files (*)")]
+        nameFilters: [qsTr("AUC data (*.auc *.mwrs *.mw *.mw? *.ra? *.ri? *.ip? *.wa? *.wi? *.fi?)"), qsTr("openAUC (*.auc)"),
+                      qsTr("Multi-wavelength (*.mwrs *.mw *.mw?)"), qsTr("Beckman XL (*.ra? *.ri? *.ip? *.wa? *.wi? *.fi?)"),
+                      qsTr("All files (*)")]
         onAccepted: ctrl.openFiles(selectedFiles)
     }
     FolderDialog {
@@ -41,16 +52,24 @@ ApplicationWindow {
         title: live ? qsTr("Watch folder (live)") : qsTr("Open folder")
         onAccepted: ctrl.openFolder(selectedFolder, live)
     }
-    FileDialog {
+    ExportDialog {
         id: exportDialog
-        title: qsTr("Export processed scans")
+        controller: ctrl
+    }
+    FileDialog {
+        id: saveGraphDialog
+        title: qsTr("Save graph")
         fileMode: FileDialog.SaveFile
-        defaultSuffix: "csv"
-        nameFilters: [qsTr("CSV (*.csv)")]
-        onAccepted: ctrl.exportCsv(selectedFile)
+        defaultSuffix: "png"
+        nameFilters: [qsTr("PNG image (*.png)"), qsTr("PDF document (*.pdf)"), qsTr("JPEG image (*.jpg)")]
+        onAccepted: {
+            const url = selectedFile
+            win.grabGraph(r => ctrl.saveImage(r.image, url, ctrl.runInfo))
+        }
     }
 
     Shortcut { sequences: [StandardKey.Open]; onActivated: fileDialog.open() }
+    Shortcut { sequences: [StandardKey.Print]; enabled: ctrl.canPrint && ctrl.scanCount > 0; onActivated: win.grabGraph(r => ctrl.printImage(r.image, ctrl.runInfo)) }
     Shortcut { sequence: "Esc"; onActivated: scanView.plot.selectedCurve = -1 }
     Shortcut { sequence: "F1"; onActivated: scanView.plot.autoscale() }  // same key as the LabVIEW viewer
     Shortcut { sequences: ["Ctrl+Right", "PgUp"]; onActivated: ctrl.stepWavelength(1) }
@@ -78,8 +97,29 @@ ApplicationWindow {
                 }
             }
             ToolSeparator {}
-            ToolButton { text: qsTr("Export CSV…"); enabled: scanView.plot.hasData; onClicked: exportDialog.open() }
+            ToolButton {
+                text: ctrl.exporting ? qsTr("Exporting…") : qsTr("Export…")
+                enabled: scanView.plot.hasData && !ctrl.exporting
+                onClicked: exportDialog.open()
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("CSV, Origin, Beckman XL or UltraScan (.auc), one or many wavelengths")
+            }
+            ToolButton {
+                text: qsTr("Print…")
+                visible: ctrl.canPrint
+                enabled: ctrl.scanCount > 0
+                onClicked: win.grabGraph(r => ctrl.printImage(r.image, ctrl.runInfo))
+            }
+            ToolButton { text: qsTr("Save graph…"); enabled: ctrl.scanCount > 0; onClicked: saveGraphDialog.open() }
+            ToolSeparator {}
             ToolButton { text: qsTr("Autoscale"); enabled: scanView.plot.hasData; onClicked: scanView.plot.autoscale() }
+            TabBar {
+                id: viewTabs
+                visible: ctrl.surfaceSupported
+                Layout.leftMargin: 8
+                TabButton { text: qsTr("Scans"); width: implicitWidth }
+                TabButton { text: qsTr("3D surface"); width: implicitWidth }
+            }
             Item { Layout.fillWidth: true }
             Label {
                 text: ctrl.runInfo
@@ -101,19 +141,24 @@ ApplicationWindow {
             controller: ctrl
         }
 
-        SplitView {
-            orientation: Qt.Vertical
+        StackLayout {
+            id: viewStack
             SplitView.fillWidth: true
+            currentIndex: viewTabs.currentIndex
+
+        SplitView {
+            id: plotArea
+            orientation: Qt.Vertical
 
             PlotView {
                 id: scanView
                 curvesSelectable: true
                 SplitView.fillHeight: true
                 SplitView.minimumHeight: 200
-                xLabel: qsTr("Radius (cm)")
+                xLabel: ctrl.xLabel
                 yLabel: ctrl.yLabel
                 placeholder: ctrl.processingError !== "" ? ctrl.processingError
-                             : qsTr("Open .auc/.mwrs/.mw files or a data folder.\nWheel: zoom · Drag: pan · Right-drag: zoom box · Double-click/F1: autoscale · Click: select curve\nCtrl+←/→: previous/next wavelength")
+                             : qsTr("Open .auc/.mwrs/.mw/XL files or a data folder.\nWheel: zoom · Drag: pan · Right-drag: zoom box · Double-click/F1: autoscale · Click: select curve\nCtrl+←/→: previous/next wavelength")
                 markers: {
                     var m = []
                     if (ctrl.offsetMode === 1)
@@ -126,10 +171,13 @@ ApplicationWindow {
                         m.push({ value: ctrl.intR1, color: "#1d4ed8", label: qsTr("∫"), key: "intR1" })
                         m.push({ value: ctrl.intR2, color: "#1d4ed8", label: "", key: "intR2" })
                     }
+                    if (ctrl.showSpectrum && ctrl.hasSpectra)
+                        m.push({ value: ctrl.spectrumRadius, color: "#059669", label: qsTr("spectrum"), key: "specR" })
                     return m
                 }
                 onMarkerMoved: (key, value) => {
-                    if (key === "offR1") ctrl.offsetR1 = value
+                    if (key === "specR") ctrl.spectrumRadius = value
+                    else if (key === "offR1") ctrl.offsetR1 = value
                     else if (key === "offR2") ctrl.offsetR2 = value
                     else if (key === "intR1") ctrl.intR1 = value
                     else if (key === "intR2") ctrl.intR2 = value
@@ -148,6 +196,36 @@ ApplicationWindow {
             }
 
             PlotView {
+                id: spectrumView
+                visible: ctrl.showSpectrum && ctrl.hasSpectra
+                curvesSelectable: true
+                SplitView.preferredHeight: 260
+                SplitView.minimumHeight: 140
+                xLabel: qsTr("Wavelength (nm)")
+                yLabel: ctrl.yLabel
+                placeholder: qsTr("Spectra at r = %1 cm (reading all scans…)").arg(ctrl.spectrumRadius.toFixed(3))
+                markers: ctrl.mwa
+                         ? [{ value: ctrl.mwaFrom, color: "#c2410c", label: qsTr("MWA"), key: "mwaFrom" },
+                            { value: ctrl.mwaTo, color: "#c2410c", label: "", key: "mwaTo" }]
+                         : [{ value: ctrl.wavelength, color: "#c2410c", label: ctrl.wavelength.toFixed(0) + " nm", key: "wl" }]
+                onMarkerMoved: (key, value) => {
+                    if (key === "wl") ctrl.wavelengthIndex = ctrl.wavelengthIndexOf(value)
+                    else if (key === "mwaFrom") ctrl.mwaFrom = value
+                    else if (key === "mwaTo") ctrl.mwaTo = value
+                }
+                Label {
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.rightMargin: 24
+                    anchors.topMargin: 16
+                    visible: spectrumView.plot.hasData
+                    text: qsTr("r = %1 ± %2 cm").arg(ctrl.spectrumRadius.toFixed(3)).arg(ctrl.spectrumWidth.toFixed(3))
+                    color: "#059669"
+                    font.pixelSize: 12
+                }
+            }
+
+            PlotView {
                 id: integralView
                 visible: ctrl.integrate
                 SplitView.preferredHeight: 230
@@ -156,6 +234,14 @@ ApplicationWindow {
                 yLabel: ctrl.radialWeight ? qsTr("∫A·r dr (OD·cm²)") : qsTr("∫A dr (OD·cm)")
                 placeholder: qsTr("Radial integral per scan")
             }
+        }
+
+        Loader {
+            id: surfaceLoader
+            // Created on first use: Qt Quick 3D starts only when the tab is opened.
+            active: ctrl.surfaceSupported && viewTabs.currentIndex === 1
+            Component.onCompleted: if (ctrl.surfaceSupported) setSource(Qt.resolvedUrl("SurfaceView.qml"), { controller: ctrl })
+        }
         }
 
         ScrollView {
