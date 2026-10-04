@@ -6,7 +6,8 @@ import QtQuick.Layouts
 import QtGraphs
 import Auc.DataTool
 
-// 3D surface: radius × wavelength of one scan, or radius × time at the current wavelength.
+// 3D surface: the scans at the current wavelength as a radius × time surface, or radius ×
+// wavelength of one scan.
 // Drag rotates, wheel zooms, click shows the value under the cursor.
 Item {
     id: root
@@ -35,21 +36,31 @@ Item {
                 Label { text: qsTr("Surface"); height: modeBox.height; verticalAlignment: Text.AlignVCenter }
                 ComboBox {
                     id: modeBox
-                    model: [qsTr("Radius × wavelength (one scan)"), qsTr("Radius × time (current wavelength)")]
-                    currentIndex: root.controller.hasSpectra ? root.controller.surfaceMode : 1
+                    // Radius × wavelength needs multi-wavelength data; otherwise radius × time is used.
+                    model: [qsTr("Radius × time (scans at the current wavelength)"), qsTr("Radius × wavelength (one scan)")]
+                    currentIndex: root.controller.hasSpectra ? root.controller.surfaceMode : 0
                     enabled: root.controller.hasSpectra
                     onActivated: (i) => root.controller.surfaceMode = i
                     implicitContentWidthPolicy: ComboBox.WidestText
                 }
+                ComboBox {
+                    visible: modeBox.currentIndex === 0
+                    model: [qsTr("t (min)"), qsTr("ω²t")]
+                    currentIndex: root.controller.surfaceOmega2t ? 1 : 0
+                    onActivated: (i) => root.controller.surfaceOmega2t = i === 1
+                    implicitContentWidthPolicy: ComboBox.WidestText
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Time axis of the surface")
+                }
                 Label {
                     text: qsTr("Scan")
-                    visible: modeBox.currentIndex === 0
+                    visible: modeBox.currentIndex === 1
                     height: modeBox.height
                     verticalAlignment: Text.AlignVCenter
                 }
                 Slider {
                     id: scanSlider
-                    visible: modeBox.currentIndex === 0
+                    visible: modeBox.currentIndex === 1
                     from: 1
                     to: Math.max(1, root.controller.scanCount)
                     stepSize: 1
@@ -65,7 +76,7 @@ Item {
                     width: 200
                 }
                 Label {
-                    visible: modeBox.currentIndex === 0
+                    visible: modeBox.currentIndex === 1
                     text: Math.round(scanSlider.value) + " / " + root.controller.scanCount
                     height: modeBox.height
                     verticalAlignment: Text.AlignVCenter
@@ -131,7 +142,7 @@ Item {
                 titleVisible: true
                 min: feeder.zMin
                 max: feeder.zMax
-                labelFormat: "%.0f"
+                labelFormat: root.controller.surfaceOmega2t && modeBox.currentIndex === 0 ? "%.2e" : "%.0f"
             }
 
             Surface3DSeries {

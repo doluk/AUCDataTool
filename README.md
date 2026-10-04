@@ -25,7 +25,7 @@ Targets Windows, macOS and Linux; the UI is Qt Quick so an Android build is poss
 | TI/RI noise: load UltraScan noise XML or plain text | done |
 | Live mode: follow a folder while the run is acquiring (new scans, new cells) | done |
 | Spectra: all scans against λ at a radius (draggable), with absorbance/dark current | done |
-| 3D surface (Qt Graphs): radius × λ of one scan, or radius × time | done |
+| 3D surface (Qt Graphs): radius × time (or ω²t) of the scans at one λ, or radius × λ of one scan | done |
 | Export: CSV, Origin ASCII, Beckman XL, UltraScan III `.auc` — current view or a λ range | done |
 | Print graph, save graph (PNG, PDF) | done |
 
@@ -104,8 +104,10 @@ quits, e.g. absorbance at 260–280 nm, every 2nd wavelength, as UltraScan files
   and the orange marker in the spectrum plot to change the wavelength. Absorbance, the
   reference mode, dark current and the scan selection apply as in the scan plot. Spectra
   read every scan file completely (a 350-scan × 202-λ run: about 0.2 s, then cached).
-- **3D surface** (tab *3D surface*, Qt Graphs): *radius × wavelength* of one scan
-  (slider) or *radius × time* of the processed scans at the current wavelength. Drag to
+- **3D surface** (tab *3D surface*, Qt Graphs): *radius × time* — the processed scans at
+  the current wavelength as one surface, intensity or absorbance, time in minutes or as
+  ω²t (any data, also single-wavelength) — or *radius × wavelength* of one scan (slider,
+  multi-wavelength data). Drag to
   rotate, wheel to zoom, click for the value. The grid is reduced to at most 400 × 300 points.
 - Settings (wavelength, reference, display) are remembered per channel.
 

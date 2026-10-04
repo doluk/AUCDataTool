@@ -67,8 +67,8 @@ struct ProcessingOptions {
 
 /// What the 3D surface shows.
 enum class SurfaceMode {
-    RadiusWavelength = 0,  ///< one scan: radius × wavelength
-    RadiusTime = 1,        ///< current wavelength: radius × time (all selected scans)
+    RadiusTime = 0,        ///< current wavelength: radius × time, one row per selected scan
+    RadiusWavelength = 1,  ///< one scan: radius × wavelength (multi-wavelength data)
 };
 
 /// Formats of exportData().
@@ -149,6 +149,8 @@ class AppController : public QObject {
     Q_PROPERTY(int surfaceMode READ surfaceMode WRITE setSurfaceMode NOTIFY surfaceSettingsChanged)
     /// Scan index for the radius × λ surface, −1 = last scan.
     Q_PROPERTY(int surfaceScan READ surfaceScan WRITE setSurfaceScan NOTIFY surfaceSettingsChanged)
+    /// Radius × time surface: time axis as ω²t instead of minutes.
+    Q_PROPERTY(bool surfaceOmega2t READ surfaceOmega2t WRITE setSurfaceOmega2t NOTIFY surfaceSettingsChanged)
     Q_PROPERTY(QString surfaceTitle READ surfaceTitle NOTIFY surfaceChanged)
 
     // Export / print
@@ -227,6 +229,8 @@ public:
     void setSurfaceMode(int m);
     int surfaceScan() const { return m_surfaceScan; }
     void setSurfaceScan(int s);
+    bool surfaceOmega2t() const { return m_surfaceOmega2t; }
+    void setSurfaceOmega2t(bool on);
     QString surfaceTitle() const { return m_surface ? m_surface->title : QString(); }
     /// Latest surface data (null if the surface is not shown or not available).
     SurfaceGridPtr surfaceGrid() const { return m_surface; }
@@ -293,7 +297,8 @@ private:
         quint64 generation = 0;
         bool keepView = false;
         bool surface = false;
-        SurfaceMode surfaceMode = SurfaceMode::RadiusWavelength;
+        SurfaceMode surfaceMode = SurfaceMode::RadiusTime;
+        bool surfaceOmega2t = false;
         int surfaceScan = -1;
         bool plots = true;  ///< false: only the processed dataset (export)
         QString yLabel;     ///< value axis title (surface)
@@ -348,7 +353,8 @@ private:
     QString m_lastSpectrumKey;
     SurfaceGridPtr m_surface;
     bool m_surfaceActive = false;
-    SurfaceMode m_surfaceMode = SurfaceMode::RadiusWavelength;
+    SurfaceMode m_surfaceMode = SurfaceMode::RadiusTime;
+    bool m_surfaceOmega2t = false;
     int m_surfaceScan = -1;
 
     bool m_optReverse = false;

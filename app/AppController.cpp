@@ -853,8 +853,12 @@ SurfaceGridPtr AppController::computeSurface(const Job& job, const auc::Dataset&
         const auto cols = pickIndices(processed.radius.size(), kMaxCols);
         const auto rows = pickIndices(processed.scans.size(), kMaxRows);
         for (std::size_t c : cols) g->x.push_back(float(processed.radius[c]));
-        for (std::size_t r : rows) g->z.push_back(float(processed.scans[r].seconds / 60.0));
-        g->zTitle = tr("Time (min)");
+        for (std::size_t r : rows)
+            g->z.push_back(float(job.surfaceOmega2t ? processed.scans[r].omega2t : processed.scans[r].seconds / 60.0));
+        g->zTitle = job.surfaceOmega2t ? tr("ω²t (rad²/s)") : tr("Time (min)");
+        // Rows must be monotonic in z (reverse/selection keep the order; ω²t could repeat).
+        for (std::size_t i = 1; i < g->z.size(); ++i)
+            if (!(g->z[i] > g->z[i - 1])) g->z[i] = std::nextafter(g->z[i - 1], std::numeric_limits<float>::max());
         fill(rows, cols, [&](std::size_t r, std::size_t c) {
             const auto& vals = processed.scans[r].values;
             return c < vals.size() ? vals[c] : std::numeric_limits<float>::quiet_NaN();
@@ -966,7 +970,8 @@ AppController::Job AppController::makeJob(const Entry& e) const
     job.ti = e.ti;
     job.ri = e.ri;
     job.surface = m_surfaceActive;
-    job.surfaceMode = m_surfaceMode;
+    job.surfaceMode = hasSpectra() ? m_surfaceMode : SurfaceMode::RadiusTime;
+    job.surfaceOmega2t = m_surfaceOmega2t;
     job.surfaceScan = m_surfaceScan;
     job.yLabel = yLabel();
     return job;
@@ -1059,9 +1064,17 @@ void AppController::setSurfaceActive(bool on)
 
 void AppController::setSurfaceMode(int m)
 {
-    const auto mode = m == 1 ? SurfaceMode::RadiusTime : SurfaceMode::RadiusWavelength;
+    const auto mode = m == 1 ? SurfaceMode::RadiusWavelength : SurfaceMode::RadiusTime;
     if (mode == m_surfaceMode) return;
     m_surfaceMode = mode;
+    emit surfaceSettingsChanged();
+    if (m_surfaceActive) reprocess(true);
+}
+
+void AppController::setSurfaceOmega2t(bool on)
+{
+    if (on == m_surfaceOmega2t) return;
+    m_surfaceOmega2t = on;
     emit surfaceSettingsChanged();
     if (m_surfaceActive) reprocess(true);
 }
