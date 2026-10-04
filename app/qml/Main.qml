@@ -18,6 +18,8 @@ ApplicationWindow {
     // Exposed for main.cpp (command-line files, benchmark).
     property alias controller: ctrl
     property alias mainPlot: scanView.plot
+    /// 0 scans, 1 run conditions, 2 3D surface (main.cpp --view)
+    property alias viewIndex: viewTabs.currentIndex
     property real lastProcessMs: 0
 
     AppController {
@@ -25,15 +27,19 @@ ApplicationWindow {
         scanPlot: scanView.plot
         integralPlot: integralView.plot
         spectrumPlot: spectrumView.plot
-        surfaceActive: viewTabs.currentIndex === 1
+        speedPlot: runView.speedPlot
+        temperaturePlot: runView.temperaturePlot
+        omega2tPlot: runView.omega2tPlot
+        surfaceActive: viewTabs.currentIndex === 2
         onProcessed: (ms) => win.lastProcessMs = ms
         // --set surfaceActive=true on the command line opens the tab.
-        onSurfaceSettingsChanged: if (surfaceActive && surfaceSupported) viewTabs.currentIndex = 1
+        onSurfaceSettingsChanged: if (surfaceActive && surfaceSupported) viewTabs.currentIndex = 2
     }
 
     // Grabs the visible graph area (scan/spectrum/integral plots or the 3D surface).
     function grabGraph(callback) {
-        const item = viewStack.currentIndex === 1 && surfaceLoader.item ? surfaceLoader.item : plotArea
+        const item = viewStack.currentIndex === 2 && surfaceLoader.item ? surfaceLoader.item
+                   : viewStack.currentIndex === 1 ? runView : plotArea
         item.grabToImage(callback, Qt.size(item.width * 2, item.height * 2))
     }
 
@@ -115,10 +121,14 @@ ApplicationWindow {
             ToolButton { text: qsTr("Autoscale"); enabled: scanView.plot.hasData; onClicked: scanView.plot.autoscale() }
             TabBar {
                 id: viewTabs
-                visible: ctrl.surfaceSupported
                 Layout.leftMargin: 8
                 TabButton { text: qsTr("Scans"); width: implicitWidth }
-                TabButton { text: qsTr("3D surface"); width: implicitWidth }
+                TabButton { text: qsTr("Run conditions"); width: implicitWidth }
+                TabButton {
+                    text: qsTr("3D surface")
+                    visible: ctrl.surfaceSupported
+                    width: visible ? implicitWidth : 0
+                }
             }
             Item { Layout.fillWidth: true }
             Label {
@@ -236,10 +246,15 @@ ApplicationWindow {
             }
         }
 
+        RunConditionsView {
+            id: runView
+            controller: ctrl
+        }
+
         Loader {
             id: surfaceLoader
             // Created on first use: Qt Quick 3D starts only when the tab is opened.
-            active: ctrl.surfaceSupported && viewTabs.currentIndex === 1
+            active: ctrl.surfaceSupported && viewTabs.currentIndex === 2
             Component.onCompleted: if (ctrl.surfaceSupported) setSource(Qt.resolvedUrl("SurfaceView.qml"), { controller: ctrl })
         }
         }

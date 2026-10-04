@@ -233,10 +233,12 @@ IoResult parseMwrsHeader(const QByteArray& head, qint64 fileSize, const MwrsRunI
     }
 
     if (!r.have(24)) return fail(IoResult::NotAucFile, QStringLiteral("truncated .mwrs header"));
-    // LabVIEW: rotor speed first, then the set speed added in v1.1. (UltraScan reads the
-    // two in the opposite order; the set speed is the round number.)
-    h.rpm = r.u16();
+    // Set speed first, then the measured rotor speed (added in v1.1), as UltraScan reads
+    // them. The LabVIEW viewer reads the opposite order, but in real runs the first value
+    // is constant over all scans (60000, 53000, 50000 rpm) while the second varies by a few
+    // rpm – the measured speed.
     h.setRpm = r.u16();
+    h.rpm = r.u16();
     h.temperature = r.u16() / 10.0;
     h.omega2t = r.f32();
     h.seconds = r.u32();
@@ -386,8 +388,8 @@ QByteArray encodeMwrs(const ScanHeader& h, const std::vector<std::vector<std::in
     o.u8(quint8(h.cell));
     o.ch(h.channel);
     o.u16(quint16(h.scan));
-    o.u16(quint16(std::lround(h.rpm)));
     if (version >= 1.05) o.u16(quint16(std::lround(h.setRpm)));
+    o.u16(quint16(std::lround(h.rpm)));
     o.u16(quint16(std::lround(h.temperature * 10.0)));
     o.f32(float(h.omega2t));
     o.u32(quint32(std::lround(h.seconds)));

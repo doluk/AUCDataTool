@@ -25,6 +25,7 @@ Targets Windows, macOS and Linux; the UI is Qt Quick so an Android build is poss
 | TI/RI noise: load UltraScan noise XML or plain text | done |
 | Live mode: follow a folder while the run is acquiring (new scans, new cells) | done |
 | Spectra: all scans against λ at a radius (draggable), with absorbance/dark current | done |
+| Run conditions: speed, temperature, ω²t per scan against time, ω²t line fit | done |
 | 3D surface (Qt Graphs): radius × time (or ω²t) of the scans at one λ, or radius × λ of one scan | done |
 | Export: CSV, Origin ASCII, Beckman XL, UltraScan III `.auc` — current view or a λ range | done |
 | Print graph, save graph (PNG, PDF) | done |
@@ -78,7 +79,7 @@ workflow artifacts and attaches them to a GitHub release when a `v*` tag is push
 AUCDataTool [files/folders] [--watch FOLDER] [--set key=value …]
             [--ti-noise FILE] [--ri-noise FILE]
             [--export csv|origin|beckman|us3=PATH [--export-wavelengths FROM:TO[:STEP]]]
-            [--screenshot out.png | --save-graph out.pdf] [--screenshot-delay ms] [--benchmark N]
+            [--view scans|run|surface] [--screenshot out.png | --save-graph out.pdf] [--screenshot-delay ms] [--benchmark N]
 ```
 `--watch` opens a folder in live mode. `--set` applies view/processing options, e.g.
 `--set wavelengthIndex=60 --set displayMode=0 --set integrate=true --set showSpectrum=true`.
@@ -111,7 +112,14 @@ quits, e.g. absorbance at 260–280 nm, every 2nd wavelength, as UltraScan files
   rotate, wheel to zoom, click for the value. The grid is reduced to at most 400 × 300 points.
 - Settings (wavelength, reference, display) are remembered per channel.
 
-## Export and printing
+## Run conditions
+
+The *Run conditions* tab plots, for the selected channel, the measured and set rotor speed,
+the temperature and ω²t of every scan against time (from the scan headers). A straight line
+ω²t = ω²·(t − t₀) is fitted to the scans within 0.5 % of the median speed; its slope gives
+the effective speed and t₀ the time lost while accelerating. A deviation of the points from
+the line shows speed changes, and a wrong ω²t scaling shows up as an effective speed far
+from the measured one.
 
 *Export…* writes the processed data as shown (reference, scan selection, noise, spike
 filter, offset), for the current wavelength (or MWA range) or every n-th wavelength of a range:
@@ -210,8 +218,8 @@ All MWL values are big-endian. Layouts were recovered from the LabVIEW program
 | 0 | cell | u8 | |
 | 1 | channel | char | A/S sample, B reference |
 | 2 | scan | u16 | |
-| 4 | rotor speed | u16 | rpm |
-| 6 | set speed | u16 | rpm (not in v1.0) |
+| 4 | set speed | u16 | rpm (v1.0: rotor speed) |
+| 6 | rotor speed | u16 | rpm (not in v1.0) |
 | 8 | temperature | u16 | °C × 10 |
 | 10 | ω²t | f32 | rad²/s |
 | 14 | time | u32 | s |
@@ -239,8 +247,12 @@ CRC-32 (zlib polynomial, seeded with 0xFFFFFFFF). v4 stores λ as (λ − 180)·
 
 ### Validation with real files
 
-- **`.mwrs` v1.3** (run 1844, 202 λ): readings, rotor speed at offset 4, set speed at 6,
-  ω²t and time agree exactly with the XL `.RI2` files the LabVIEW viewer exported from
+- **`.mwrs` speeds**: the value at offset 4 is constant over all scans in real runs
+  (60000, 53000, 50000 rpm) while the one at offset 6 varies by a few rpm, so offset 4 is
+  the set speed and offset 6 the measured rotor speed — UltraScan's order. The LabVIEW
+  viewer reads them the other way round (its XL export writes the set speed as rpm).
+  Visible in the *Run conditions* tab.
+- **`.mwrs` v1.3** (run 1844, 202 λ): readings, ω²t and time agree exactly with the XL `.RI2` files the LabVIEW viewer exported from
   the same run (`1844_Cell2_500nm_Intensity`).
 - **`.mw` v1.0** (`A001.MW3`): header, λ table and time agree with the `.mwrs` files of the
   same run; ω²t is stored ÷1000 (see above).

@@ -84,7 +84,8 @@ int main(int argc, char** argv)
     const QCommandLineOption saveGraphOpt(QStringLiteral("save-graph"),
                                           QStringLiteral("Save the window as a graph page (.pdf, .png) after --screenshot-delay and quit."),
                                           QStringLiteral("file"));
-    parser.addOptions({shotOpt, benchOpt, sizeOpt, setOpt, tiOpt, riOpt, watchOpt, delayOpt, exportOpt, exportAllOpt, saveGraphOpt});
+    const QCommandLineOption viewOpt(QStringLiteral("view"), QStringLiteral("Initial view: scans, run or surface."), QStringLiteral("view"));
+    parser.addOptions({viewOpt, shotOpt, benchOpt, sizeOpt, setOpt, tiOpt, riOpt, watchOpt, delayOpt, exportOpt, exportAllOpt, saveGraphOpt});
     parser.process(app);
 
 #ifdef Q_OS_ANDROID
@@ -151,6 +152,15 @@ int main(int argc, char** argv)
             timer->start();
             plot->setSeries(series);
         });
+    }
+
+    if (parser.isSet(viewOpt)) {
+        const int index = int(QStringList{QStringLiteral("scans"), QStringLiteral("run"), QStringLiteral("surface")}.indexOf(parser.value(viewOpt)));
+        if (index < 0) {
+            std::fprintf(stderr, "--view: expected scans, run or surface\n");
+            return 2;
+        }
+        window->setProperty("viewIndex", index);
     }
 
     if (parser.isSet(exportOpt) && controller) {

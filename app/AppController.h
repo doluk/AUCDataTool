@@ -89,6 +89,12 @@ class AppController : public QObject {
     Q_PROPERTY(ScanPlot* scanPlot READ scanPlot WRITE setScanPlot NOTIFY scanPlotChanged)
     Q_PROPERTY(ScanPlot* integralPlot READ integralPlot WRITE setIntegralPlot NOTIFY integralPlotChanged)
     Q_PROPERTY(ScanPlot* spectrumPlot READ spectrumPlot WRITE setSpectrumPlot NOTIFY spectrumPlotChanged)
+    // Run conditions of the current channel against time (one point per scan)
+    Q_PROPERTY(ScanPlot* speedPlot READ speedPlot WRITE setSpeedPlot NOTIFY runPlotsChanged)
+    Q_PROPERTY(ScanPlot* temperaturePlot READ temperaturePlot WRITE setTemperaturePlot NOTIFY runPlotsChanged)
+    Q_PROPERTY(ScanPlot* omega2tPlot READ omega2tPlot WRITE setOmega2tPlot NOTIFY runPlotsChanged)
+    /// Ranges of speed and temperature and the ω²t fit, as text.
+    Q_PROPERTY(QString runConditions READ runConditions NOTIFY runConditionsChanged)
 
     // Current channel
     Q_PROPERTY(int scanCount READ scanCount NOTIFY datasetChanged)
@@ -179,6 +185,13 @@ public:
     void setIntegralPlot(ScanPlot* p);
     ScanPlot* spectrumPlot() const { return m_spectrumPlot; }
     void setSpectrumPlot(ScanPlot* p);
+    ScanPlot* speedPlot() const { return m_speedPlot; }
+    void setSpeedPlot(ScanPlot* p);
+    ScanPlot* temperaturePlot() const { return m_temperaturePlot; }
+    void setTemperaturePlot(ScanPlot* p);
+    ScanPlot* omega2tPlot() const { return m_omega2tPlot; }
+    void setOmega2tPlot(ScanPlot* p);
+    QString runConditions() const { return m_runConditions; }
 
     int scanCount() const;
     double radiusMin() const;
@@ -269,6 +282,8 @@ signals:
     void scanPlotChanged();
     void integralPlotChanged();
     void spectrumPlotChanged();
+    void runPlotsChanged();
+    void runConditionsChanged();
     void surfaceSettingsChanged();
     void surfaceChanged();
     void exportingChanged();
@@ -319,6 +334,7 @@ private:
     void addChannels(const auc::OpenResult& res, bool selectFirstNew);
     void initSettings(int index);
     void reprocess(bool keepView);
+    void updateRunPlots();
     Job makeJob(const Entry& e) const;
     static void computeSpectrum(const Job& job, const std::vector<std::size_t>& selected, Result& res, QStringList& warnings);
     static SurfaceGridPtr computeSurface(const Job& job, const auc::Dataset& processed, QString& error);
@@ -350,6 +366,8 @@ private:
     QPointer<ScanPlot> m_scanPlot;
     QPointer<ScanPlot> m_integralPlot;
     QPointer<ScanPlot> m_spectrumPlot;
+    QPointer<ScanPlot> m_speedPlot, m_temperaturePlot, m_omega2tPlot;
+    QString m_runConditions;
     QString m_lastSpectrumKey;
     SurfaceGridPtr m_surface;
     bool m_surfaceActive = false;

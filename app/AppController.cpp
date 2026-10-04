@@ -255,6 +255,7 @@ void AppController::liveUpdate()
     const auc::OpenResult res = auc::openData({m_watcher.folder()});
     addChannels(res, false);
     if (current() && current()->src != before) {
+        updateRunPlots();
         emit datasetChanged();
         emit viewChanged();
         reprocess(true);  // keep the user's zoom during a run
@@ -281,6 +282,7 @@ void AppController::closeAll()
         m_scanPlot->setCurveStyles({});
     }
     if (m_integralPlot) m_integralPlot->setSeries(nullptr);
+    updateRunPlots();
     emit channelsChanged();
     emit currentIndexChanged();
     emit datasetChanged();
@@ -337,6 +339,7 @@ void AppController::setCurrentIndex(int i)
     emit datasetChanged();
     emit viewChanged();
     emit noiseChanged();
+    updateRunPlots();
 
     // Radius-dependent options: keep them if they fit the new channel.
     if (const auto* c = currentSrc(); c && !c->radius.empty()) {
@@ -1035,6 +1038,118 @@ void AppController::setScanPlot(ScanPlot* p)
     m_scanPlot = p;
     emit scanPlotChanged();
     reprocess(false);
+}
+
+void AppController::setSpeedPlot(ScanPlot* p)
+{
+    if (m_speedPlot == p) return;
+    m_speedPlot = p;
+    emit runPlotsChanged();
+    updateRunPlots();
+}
+
+void AppController::setTemperaturePlot(ScanPlot* p)
+{
+    if (m_temperaturePlot == p) return;
+    m_temperaturePlot = p;
+    emit runPlotsChanged();
+    updateRunPlots();
+}
+
+void AppController::setOmega2tPlot(ScanPlot* p)
+{
+    if (m_omega2tPlot == p) return;
+    m_omega2tPlot = p;
+    emit runPlotsChanged();
+    updateRunPlots();
+}
+
+void AppController::updateRunPlots()
+{
+    // Rotor speed, temperature and ω²t of every scan against time, from the scan headers
+    // (no readings needed, so done on the GUI thread).
+    const auc::ChannelSource* c = currentSrc();
+    auto set = [](ScanPlot* p, PlotSeriesPtr series, const QHash<int, CurveStyle>& styles) {
+        if (!p) return;
+        p->setCurveStyles(styles);
+        p->setSeries(std::move(series), false);
+    };
+    if (!c || c->scans.empty()) {
+        set(m_speedPlot, nullptr, {});
+        set(m_temperaturePlot, nullptr, {});
+        set(m_omega2tPlot, nullptr, {});
+        if (!m_runConditions.isEmpty()) {
+            m_runConditions.clear();
+            emit runConditionsChanged();
+        }
+        return;
+    }
+    const auto& sc = c->scans;
+    const std::size_t n = sc.size();
+    std::vector<float> minutes(n), measured(n), setSpeed(n), temp(n), w2tf(n), line(n);
+    std::vector<double> seconds(n), w2t(n), rpm(n);
+    bool hasSet = false;
+    for (std::size_t i = 0; i < n; ++i) {
+        minutes[i] = float(sc[i].seconds / 60.0);
+        seconds[i] = sc[i].seconds;
+        w2t[i] = sc[i].omega2t;
+        rpm[i] = sc[i].rpm;
+        measured[i] = float(sc[i].rpm);
+        setSpeed[i] = float(sc[i].setRpm);
+        hasSet = hasSet || sc[i].setRpm > 0;
+        temp[i] = float(sc[i].temperature);
+        w2tf[i] = float(sc[i].omega2t);
+    }
+    using Curves = std::vector<std::pair<std::vector<float>, QColor>>;
+    auto series = [&](Curves curves, const QStringList& labels) {
+        auto s = std::make_shared<PlotSeries>();
+        s->x = minutes;
+        for (std::size_t k = 0; k < curves.size(); ++k) {
+            s->y.push_back(std::move(curves[k].first));
+            s->colors.push_back(curves[k].second);
+            s->ids.push_back(int(k));
+            s->labels.push_back(labels.value(int(k)));
+        }
+        s->computeBounds();
+        return PlotSeriesPtr(s);
+    };
+    CurveStyle points;
+    points.marker = CurveStyle::Circle;
+    points.markerSize = 5.0f;
+    CurveStyle dashed;
+    dashed.line = CurveStyle::Dash;
+    dashed.width = 1.5f;
+
+    // Speed: measured, and the set speed where the format stores it.
+    Curves speedCurves{{measured, QColor(0x1d, 0x4e, 0xd8)}};
+    if (hasSet) speedCurves.push_back({setSpeed, QColor(0x9c, 0xa3, 0xaf)});
+    set(m_speedPlot, series(std::move(speedCurves), {tr("measured"), tr("set")}), {{0, points}, {1, dashed}});
+    set(m_temperaturePlot, series({{temp, QColor(0xdc, 0x26, 0x26)}}, {tr("temperature")}), {{0, points}});
+
+    // ω²t with the straight line ω²·(t − t₀) through the scans at constant speed.
+    const auc::proc::Omega2tFit fit = auc::proc::fitOmega2t(seconds, w2t, rpm);
+    for (std::size_t i = 0; i < n; ++i) line[i] = float(fit.slope * seconds[i] + fit.intercept);
+    Curves w2tCurves{{w2tf, QColor(0x05, 0x96, 0x69)}};
+    if (fit.valid) w2tCurves.push_back({line, QColor(0x6b, 0x72, 0x80)});
+    set(m_omega2tPlot, series(std::move(w2tCurves), {tr("ω²t"), tr("fit")}), {{0, points}, {1, dashed}});
+
+    const auto [rmin, rmax] = std::minmax_element(rpm.begin(), rpm.end());
+    const auto [tmin, tmax] = std::minmax_element(temp.begin(), temp.end());
+    QStringList parts;
+    parts << tr("%n scan(s), %1–%2 min", nullptr, int(n)).arg(minutes.front(), 0, 'f', 1).arg(minutes.back(), 0, 'f', 1);
+    parts << tr("speed %1–%2 rpm").arg(*rmin, 0, 'f', 0).arg(*rmax, 0, 'f', 0);
+    parts << tr("temperature %1–%2 °C").arg(*tmin, 0, 'f', 1).arg(*tmax, 0, 'f', 1);
+    if (fit.valid)
+        parts << tr("ω²t fit over %1 scans: %2 rpm effective, t₀ = %3 s, rms %4 %")
+                     .arg(fit.used)
+                     .arg(fit.rpm, 0, 'f', 0)
+                     .arg(fit.t0, 0, 'f', 1)
+                     .arg(fit.rms * 100.0, 0, 'g', 2);
+    const QString text = parts.join(QStringLiteral(" · "));
+    if (text != m_runConditions) {
+        m_runConditions = text;
+        emit runConditionsChanged();
+    }
 }
 
 void AppController::setSpectrumPlot(ScanPlot* p)
