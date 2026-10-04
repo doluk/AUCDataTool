@@ -113,6 +113,21 @@ AccelerationEstimate estimateAcceleration(std::span<const double> measuredSpeeds
 /// ω²t from a speed profile by trapezoidal integration of ω(t)² (ω = 2π·rpm/60).
 double integrateOmega2t(std::span<const double> seconds, std::span<const double> rpm);
 
+/// Straight line ω²t = ω²·(t − t₀) fitted to the scans at constant speed.
+struct Omega2tFit {
+    bool valid = false;
+    double slope = 0.0;      ///< ω², rad²/s²
+    double intercept = 0.0;  ///< rad²/s
+    double rpm = 0.0;        ///< effective speed √slope · 60/(2π)
+    double t0 = 0.0;         ///< s, time at which ω²t would be 0 (acceleration offset)
+    double rms = 0.0;        ///< rms deviation of the used scans, relative to ω²t at the last one
+    std::size_t used = 0;    ///< scans in the fit
+};
+
+/// Least-squares fit of ω²t against t over the scans whose speed is within 0.5 % of the
+/// median speed (scans during acceleration or deceleration are left out). Needs ≥ 2 scans.
+Omega2tFit fitOmega2t(std::span<const double> seconds, std::span<const double> omega2t, std::span<const double> rpm);
+
 // ---------------------------------------------------------------------------------------
 // Multi-wavelength
 // ---------------------------------------------------------------------------------------

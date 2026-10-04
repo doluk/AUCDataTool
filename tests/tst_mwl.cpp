@@ -245,6 +245,47 @@ private slots:
         QCOMPARE(d->scans[2].values[1], float(1000000 + 2000 + 10 + 3));
     }
 
+    void mwOmega2tScaleAndCellSuffix()
+    {
+        // Later acquisition versions store ω²t ÷1000 instead of ÷10000 and name files
+        // "A001.MW3" (cell number in the extension). Stored raw value 1.8·10^6: ×10000 would
+        // exceed ω²·t (2.1·10^9 at 39987 rpm, 120 s), so ×1000 is used.
+        QTemporaryDir dir;
+        auto h = header(3, 'A', 1, 16, 4);
+        h.omega2t = 1.8e10;  // the encoder divides by 10000 → raw 1.8e6
+        writeBytes(dir.filePath("A001.MW3"), mwl::encodeMw12(h, rows(3, 1, 16, 4), {0, 0, 0, 0}));
+        h = header(3, 'A', 2, 16, 4);  // plausible as ÷10000: kept
+        writeBytes(dir.filePath("A002.MW3"), mwl::encodeMw12(h, rows(3, 2, 16, 4), {0, 0, 0, 0}));
+        const OpenResult res = openData({dir.path()});
+        QVERIFY2(res.warnings.isEmpty(), qPrintable(res.warnings.join("; ")));
+        QCOMPARE(res.channels.size(), std::size_t(1));
+        const auto& c = res.channels.front();
+        QCOMPARE(c->format, SourceFormat::Mw);
+        QCOMPARE(c->scans[0].omega2t, 1.8e9);
+        QCOMPARE(c->scans[1].omega2t, 3.0e9);
+    }
+
+    void mwrsIntensityScaleFromMagnitude()
+    {
+        // "1.3" intensity runs whose readings are ×10000 (detector counts never reach 5·10^6).
+        QTemporaryDir dir;
+        mwl::MwrsRunInfo info;
+        info.version = 1.3;
+        info.takeIntensity = true;
+        QVERIFY(mwl::writeMwrsXml(dir.filePath("r.mwrs.xml"), info).ok());
+        auto big = rows(1, 1, 12, 4);
+        for (auto& row : big)
+            for (auto& v : row) v = 30000 * 10000 + v;  // 30000 counts ×10000
+        writeBytes(dir.filePath("r.1.A.s.00001.mwrs"), mwl::encodeMwrs(header(1, 'A', 1, 12, 4), big, 1.3));
+        const OpenResult res = openData({dir.path()});
+        QCOMPARE(res.channels.size(), std::size_t(1));
+        const auto& c = res.channels.front();
+        QVERIFY(c->formatName.contains("10000"));
+        std::shared_ptr<const Dataset> d;
+        QVERIFY(c->wavelengthSlice(0, d).ok());
+        QVERIFY(std::abs(d->scans[0].values[0] - 30100.f) < 0.05f);  // (3e8 + 1000001) ÷ 10000
+    }
+
     void groupsAucFilesByWavelength()
     {
         QTemporaryDir dir;

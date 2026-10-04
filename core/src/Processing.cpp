@@ -222,6 +222,45 @@ double integrateOmega2t(std::span<const double> seconds, std::span<const double>
     return sum;
 }
 
+Omega2tFit fitOmega2t(std::span<const double> seconds, std::span<const double> omega2t, std::span<const double> rpm)
+{
+    Omega2tFit f;
+    const std::size_t n = std::min({seconds.size(), omega2t.size(), rpm.size()});
+    if (n < 2) return f;
+    std::vector<double> sorted(rpm.begin(), rpm.begin() + std::ptrdiff_t(n));
+    std::nth_element(sorted.begin(), sorted.begin() + std::ptrdiff_t(n / 2), sorted.end());
+    const double median = sorted[n / 2];
+    std::vector<std::size_t> idx;
+    for (std::size_t i = 0; i < n; ++i)
+        if (median <= 0.0 || std::abs(rpm[i] - median) <= 0.005 * median) idx.push_back(i);
+    if (idx.size() < 2) return f;
+    double st = 0, sw = 0, stt = 0, stw = 0;
+    for (std::size_t i : idx) {
+        st += seconds[i];
+        sw += omega2t[i];
+        stt += seconds[i] * seconds[i];
+        stw += seconds[i] * omega2t[i];
+    }
+    const double m = double(idx.size());
+    const double den = m * stt - st * st;
+    if (!(std::abs(den) > 0.0)) return f;
+    f.slope = (m * stw - st * sw) / den;
+    f.intercept = (sw - f.slope * st) / m;
+    if (!(f.slope > 0.0)) return f;
+    f.rpm = std::sqrt(f.slope) * 60.0 / (2.0 * std::numbers::pi);
+    f.t0 = -f.intercept / f.slope;
+    double ss = 0.0, scale = 0.0;
+    for (std::size_t i : idx) {
+        const double r = omega2t[i] - (f.slope * seconds[i] + f.intercept);
+        ss += r * r;
+        scale = std::max(scale, std::abs(omega2t[i]));
+    }
+    f.rms = scale > 0.0 ? std::sqrt(ss / m) / scale : 0.0;
+    f.used = idx.size();
+    f.valid = true;
+    return f;
+}
+
 WavelengthBins binWavelengths(std::span<const float> wavelengths)
 {
     WavelengthBins b;

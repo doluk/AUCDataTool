@@ -31,6 +31,8 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.*'
+          # Qt Graphs (3D surface view) needs Qt Quick 3D and Shader Tools
+          modules: 'qtgraphs qtquick3d qtshadertools'
           cache: true
 
       - name: Configure
@@ -64,7 +66,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install dependencies
-        run: pacman -Syu --noconfirm --needed cmake ninja qt6-base qt6-declarative
+        run: pacman -Syu --noconfirm --needed cmake ninja qt6-base qt6-declarative qt6-graphs qt6-quick3d
 
       - uses: actions/checkout@v4
 

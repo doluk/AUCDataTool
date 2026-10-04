@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <numbers>
 
 namespace auc::mwl {
 
@@ -232,10 +233,12 @@ IoResult parseMwrsHeader(const QByteArray& head, qint64 fileSize, const MwrsRunI
     }
 
     if (!r.have(24)) return fail(IoResult::NotAucFile, QStringLiteral("truncated .mwrs header"));
-    // LabVIEW: rotor speed first, then the set speed added in v1.1. (UltraScan reads the
-    // two in the opposite order; the set speed is the round number.)
-    h.rpm = r.u16();
+    // Set speed first, then the measured rotor speed (added in v1.1), as UltraScan reads
+    // them. The LabVIEW viewer reads the opposite order, but in real runs the first value
+    // is constant over all scans (60000, 53000, 50000 rpm) while the second varies by a few
+    // rpm – the measured speed.
     h.setRpm = r.u16();
+    h.rpm = r.u16();
     h.temperature = r.u16() / 10.0;
     h.omega2t = r.f32();
     h.seconds = r.u32();
@@ -253,6 +256,18 @@ IoResult parseMwrsHeader(const QByteArray& head, qint64 fileSize, const MwrsRunI
     h.variant = QStringLiteral("mwrs %1").arg(run.version, 0, 'f', 1);
     out = std::move(h);
     return {};
+}
+
+/// ω²t is stored divided by 10000 according to the LabVIEW reader, but files written by
+/// later acquisition versions store it divided by 1000. The factor that keeps ω²t at or
+/// below its upper bound ω²·t (constant speed from t = 0) is used.
+static double mwOmega2t(quint32 raw, double rpm, double seconds)
+{
+    const double w = rpm * std::numbers::pi / 30.0;
+    const double bound = w * w * seconds * 1.02;
+    const double v = double(raw) * 10000.0;
+    if (bound > 0 && v > bound && double(raw) * 1000.0 <= bound) return double(raw) * 1000.0;
+    return v;
 }
 
 IoResult parseMwHeader(const QByteArray& head, qint64 fileSize, ScanHeader& out)
@@ -279,8 +294,9 @@ IoResult parseMwHeader(const QByteArray& head, qint64 fileSize, ScanHeader& out)
             h.rpm = r.u16();     // stored as I16 but used as U16 (speeds > 32767 rpm)
             h.setRpm = r.u16();
             h.temperature = r.i16() / 10.0;
-            h.omega2t = double(r.u32()) * 10000.0;
+            const quint32 w2t = r.u32();
             h.seconds = r.i32();
+            h.omega2t = mwOmega2t(w2t, h.rpm, h.seconds);
             h.points = r.u16();
             h.rStart = r.u16() / 1000.0;
             const double rEnd = r.u16() / 1000.0;
@@ -314,8 +330,9 @@ IoResult parseMwHeader(const QByteArray& head, qint64 fileSize, ScanHeader& out)
     h.description = QString::fromLatin1(r.bytes(64)).trimmed().remove(QChar(0));
     h.rpm = r.u16();  // stored as I16 but used as U16
     h.temperature = r.i16() / 10.0;
-    h.omega2t = double(r.u32()) * 10000.0;
+    const quint32 w2t = r.u32();
     h.seconds = r.i32();
+    h.omega2t = mwOmega2t(w2t, h.rpm, h.seconds);
     h.points = r.u16();
     h.rStart = r.u16() / 1000.0;
     const double rEnd = r.u16() / 1000.0;
@@ -371,8 +388,8 @@ QByteArray encodeMwrs(const ScanHeader& h, const std::vector<std::vector<std::in
     o.u8(quint8(h.cell));
     o.ch(h.channel);
     o.u16(quint16(h.scan));
-    o.u16(quint16(std::lround(h.rpm)));
     if (version >= 1.05) o.u16(quint16(std::lround(h.setRpm)));
+    o.u16(quint16(std::lround(h.rpm)));
     o.u16(quint16(std::lround(h.temperature * 10.0)));
     o.f32(float(h.omega2t));
     o.u32(quint32(std::lround(h.seconds)));

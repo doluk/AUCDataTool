@@ -2,15 +2,25 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #include "AppController.h"
 
+#include "auc/Export.h"
 #include "auc/Processing.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QImage>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QSaveFile>
 #include <QTime>
 #include <QTextStream>
 #include <QtConcurrent/QtConcurrentRun>
+
+#ifdef AUC_HAVE_PRINT
+#include <QPrintDialog>
+#include <QPrinter>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -25,16 +35,98 @@ double defaultWavelength(const auc::ChannelSource& c)
     return c.wavelengths.empty() ? 0.0 : c.wavelengths[c.wavelengths.size() / 2];
 }
 
+/// Up to `max` evenly spread indices of [0, n).
+std::vector<std::size_t> pickIndices(std::size_t n, std::size_t max)
+{
+    std::vector<std::size_t> idx;
+    if (n == 0) return idx;
+    if (n <= max) {
+        idx.resize(n);
+        for (std::size_t i = 0; i < n; ++i) idx[i] = i;
+        return idx;
+    }
+    for (std::size_t i = 0; i < max; ++i) idx.push_back(i * (n - 1) / (max - 1));
+    return idx;
+}
+
+/// CSV: comment lines, header row, one column per scan.
+bool writeCsv(const auc::Dataset& d, const QString& path, const QStringList& comments, const QString& xName, QString* error)
+{
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        *error = f.errorString();
+        return false;
+    }
+    QTextStream ts(&f);
+    for (const QString& c : comments) ts << "# " << c << "\n";
+    ts << xName;
+    for (const auto& s : d.scans) ts << ",t=" << s.seconds << "s";
+    ts << "\n";
+    for (std::size_t j = 0; j < d.radius.size(); ++j) {
+        ts << QString::number(d.radius[j], 'f', 5);
+        for (const auto& s : d.scans) ts << ',' << (j < s.values.size() ? s.values[j] : 0.f);
+        ts << "\n";
+    }
+    ts.flush();
+    if (!f.commit()) {
+        *error = f.errorString();
+        return false;
+    }
+    return true;
+}
+
+/// "name.csv" → "name_280nm.csv" when several wavelengths go to separate files.
+QString withWavelength(const QString& path, double nm)
+{
+    const QFileInfo fi(path);
+    const QString tag = QStringLiteral("_%1nm").arg(auc::exporter::wavelengthTag(nm));
+    return fi.dir().filePath(fi.completeBaseName() + tag + (fi.suffix().isEmpty() ? QString() : QStringLiteral(".") + fi.suffix()));
+}
+
+/// One page: caption on top, image scaled to the remaining area, footer.
+void paintPage(QPaintDevice* dev, const QImage& img, const QString& caption)
+{
+    QPainter p(dev);
+    const QRect page = p.viewport();
+    QFont f = p.font();
+    f.setPointSizeF(10);
+    p.setFont(f);
+    const int line = p.fontMetrics().height();
+    const QRect captionRect(page.left(), page.top(), page.width(), 2 * line);
+    p.drawText(captionRect, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, caption);
+    const QRect footer(page.left(), page.bottom() - line, page.width(), line);
+    f.setPointSizeF(8);
+    p.setFont(f);
+    p.drawText(footer, Qt::AlignRight | Qt::AlignVCenter,
+               QStringLiteral("AUCDataTool %1 · %2").arg(QStringLiteral(PROJECT_VERSION),
+                                                         QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"))));
+    const QRect area(page.left(), captionRect.bottom() + line / 2, page.width(), footer.top() - captionRect.bottom() - line);
+    if (img.isNull() || area.height() <= 0) return;
+    const QSize sz = img.size().scaled(area.size(), Qt::KeepAspectRatio);
+    const QRect target(area.left() + (area.width() - sz.width()) / 2, area.top(), sz.width(), sz.height());
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
+    p.drawImage(target, img);
+}
+
 }  // namespace
 
 AppController::AppController(QObject* parent)
     : QObject(parent)
 {
     connect(&m_future, &QFutureWatcher<Result>::finished, this, &AppController::onProcessed);
+    connect(&m_export, &QFutureWatcher<QString>::finished, this, [this] {
+        QString msg = m_export.result();
+        const bool ok = !msg.startsWith(QLatin1Char('!'));
+        if (!ok) msg = tr("Export failed: %1").arg(msg.mid(1));
+        setStatus(msg);
+        emit exportingChanged();
+        emit exportFinished(ok, msg);
+    });
     connect(this, &AppController::optionsChanged, this, [this] { reprocess(true); });
 
-    m_watcher.setNameFilters({QStringLiteral("*.auc"), QStringLiteral("*.mwrs"), QStringLiteral("*.mw"),
-                              QStringLiteral("*.mwrs.xml")});
+    m_watcher.setNameFilters({QStringLiteral("*.auc"), QStringLiteral("*.mwrs"), QStringLiteral("*.mw"), QStringLiteral("*.mw?"),
+                              QStringLiteral("*.mwrs.xml"), QStringLiteral("*.ra?"), QStringLiteral("*.ri?"),
+                              QStringLiteral("*.ip?"), QStringLiteral("*.wa?"), QStringLiteral("*.wi?"), QStringLiteral("*.fi?")});
     m_liveTimer.setSingleShot(true);
     m_liveTimer.setInterval(500);
     connect(&m_liveTimer, &QTimer::timeout, this, &AppController::liveUpdate);
@@ -45,6 +137,7 @@ AppController::AppController(QObject* parent)
 AppController::~AppController()
 {
     m_future.waitForFinished();
+    m_export.waitForFinished();
 }
 
 // ---------------------------------------------------------------------------------------
@@ -87,7 +180,9 @@ QVariantList AppController::channels() const
         else if (!c.wavelengths.empty())
             parts << tr("%1 nm").arg(c.wavelengths.front(), 0, 'f', 0);
         parts << tr("%n scan(s)", nullptr, int(c.scans.size()));
-        parts << (c.absorbanceData ? tr("absorbance") : tr("intensity"));
+        parts << (!c.valueLabel.isEmpty() ? c.valueLabel.section(QLatin1Char(' '), 0, 0).toLower()
+                  : c.absorbanceData          ? tr("absorbance")
+                                              : tr("intensity"));
         m.insert(QStringLiteral("subtitle"), parts.join(QStringLiteral(" · ")));
         list << m;
     }
@@ -102,7 +197,7 @@ void AppController::addChannels(const auc::OpenResult& res, bool selectFirstNew)
         for (int i = 0; i < m_entries.size(); ++i) {
             auto& e = m_entries[i];
             if (e.src->folder == ch->folder && e.src->key() == ch->key() && e.src->format == ch->format
-                && e.src->runId == ch->runId) {
+                && e.src->runId == ch->runId && e.src->rawType == ch->rawType && e.src->formatName == ch->formatName) {
                 e.src = ch;
                 if (!ch->wavelengths.empty())
                     e.view.wavelengthIndex = std::min(e.view.wavelengthIndex, ch->wavelengths.size() - 1);
@@ -160,6 +255,7 @@ void AppController::liveUpdate()
     const auc::OpenResult res = auc::openData({m_watcher.folder()});
     addChannels(res, false);
     if (current() && current()->src != before) {
+        updateRunPlots();
         emit datasetChanged();
         emit viewChanged();
         reprocess(true);  // keep the user's zoom during a run
@@ -186,6 +282,7 @@ void AppController::closeAll()
         m_scanPlot->setCurveStyles({});
     }
     if (m_integralPlot) m_integralPlot->setSeries(nullptr);
+    updateRunPlots();
     emit channelsChanged();
     emit currentIndexChanged();
     emit datasetChanged();
@@ -209,16 +306,21 @@ void AppController::initSettings(int index)
         v.display = DisplayMode::Absorbance;
     } else {
         // Default reference: channel B of the same cell (AUC-Viewer convention: A/S sample, B reference).
-        if (c.channel != 'B') {
+        if (c.channel != 'B' && c.channel != 'R' && c.valueLabel.isEmpty()) {
             for (int i = 0; i < m_entries.size(); ++i) {
                 const auto& o = *m_entries[i].src;
-                if (i != index && o.folder == c.folder && o.cell == c.cell && o.channel == 'B' && !o.absorbanceData) {
+                if (i != index && o.folder == c.folder && o.cell == c.cell && (o.channel == 'B' || o.channel == 'R')
+                    && !o.absorbanceData && o.valueLabel.isEmpty() && o.format == c.format) {
                     v.reference = i;
                     break;
                 }
             }
         }
         v.display = v.reference >= 0 ? DisplayMode::Absorbance : DisplayMode::Intensity;
+    }
+    if (!c.valueLabel.isEmpty()) {
+        v.reference = -1;
+        v.display = DisplayMode::Intensity;
     }
     e.view = v;
 }
@@ -237,6 +339,7 @@ void AppController::setCurrentIndex(int i)
     emit datasetChanged();
     emit viewChanged();
     emit noiseChanged();
+    updateRunPlots();
 
     // Radius-dependent options: keep them if they fit the new channel.
     if (const auto* c = currentSrc(); c && !c->radius.empty()) {
@@ -247,6 +350,7 @@ void AppController::setCurrentIndex(int i)
         if (outside(m_optOffsetR2)) m_optOffsetR2 = r1 - 0.01 * (r1 - r0), changed = true;
         if (outside(m_optIntR1)) m_optIntR1 = r0 + 0.3 * (r1 - r0), changed = true;
         if (outside(m_optIntR2)) m_optIntR2 = r0 + 0.9 * (r1 - r0), changed = true;
+        if (outside(m_optSpecR)) m_optSpecR = r0 + 0.6 * (r1 - r0), changed = true;
         if (m_optFirst >= int(c->scans.size())) m_optFirst = 0, changed = true;
         if (changed) emit optionsChanged();
     }
@@ -291,8 +395,21 @@ QString AppController::yLabel() const
 {
     const Entry* e = current();
     if (!e) return tr("Absorbance (OD)");
+    if (!e->src->valueLabel.isEmpty()) return e->src->valueLabel;
     if (e->src->absorbanceData || e->view.display == DisplayMode::Absorbance) return tr("Absorbance (OD)");
     return tr("Intensity (counts)");
+}
+
+QString AppController::xLabel() const
+{
+    const auto* c = currentSrc();
+    return c && c->xIsWavelength ? tr("Wavelength (nm)") : tr("Radius (cm)");
+}
+
+bool AppController::hasSpectra() const
+{
+    const auto* c = currentSrc();
+    return c && c->wavelengths.size() > 1 && !c->xIsWavelength;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -314,6 +431,12 @@ void AppController::setWavelengthIndex(int i)
 }
 
 void AppController::stepWavelength(int delta) { setWavelengthIndex(wavelengthIndex() + delta); }
+
+int AppController::wavelengthIndexOf(double nm) const
+{
+    const auto* c = currentSrc();
+    return c ? int(c->nearestWavelength(nm)) : 0;
+}
 
 double AppController::wavelength() const
 {
@@ -353,7 +476,7 @@ int AppController::displayMode() const { return current() ? int(current()->view.
 void AppController::setDisplayMode(int m)
 {
     Entry* e = current();
-    if (!e || e->src->absorbanceData) return;
+    if (!e || e->src->absorbanceData || !e->src->valueLabel.isEmpty()) return;
     const auto mode = m == 1 ? DisplayMode::Absorbance : DisplayMode::Intensity;
     if (mode == e->view.display) return;
     e->view.display = mode;
@@ -452,6 +575,9 @@ ProcessingOptions AppController::currentOptions() const
     o.colormap = Colormap::Kind(std::clamp(m_optColormap, 0, 3));
     o.applyTi = m_optApplyTi;
     o.applyRi = m_optApplyRi;
+    o.spectrum = m_optSpectrum;
+    o.specR = m_optSpecR;
+    o.specWidth = std::max(0.0, m_optSpecWidth);
     return o;
 }
 
@@ -501,7 +627,7 @@ AppController::Result AppController::runProcessing(Job job)
     adjustDark(*d, src, dark);
 
     // 2. Absorbance against the reference channel.
-    if (v.display == DisplayMode::Absorbance && !src.absorbanceData) {
+    if (v.display == DisplayMode::Absorbance && !src.absorbanceData && src.valueLabel.isEmpty()) {
         if (!job.ref) {
             res.error = tr("Choose a reference channel to show absorbance.");
             return res;
@@ -542,19 +668,27 @@ AppController::Result AppController::runProcessing(Job job)
     // 4. Scan selection and corrections.
     const auto& o = job.opt;
     std::vector<int> scanIds;  // original scan index of each kept scan (curve identity)
+    std::vector<std::size_t> selected;
     if (!d->scans.empty()) {
         const std::size_t last = o.lastScan < 0 ? d->scanCount() - 1 : std::size_t(o.lastScan);
-        const auto idx = auc::proc::selectScans(d->scanCount(), std::size_t(o.firstScan), last, std::size_t(o.everyNth));
+        selected = auc::proc::selectScans(d->scanCount(), std::size_t(o.firstScan), last, std::size_t(o.everyNth));
         std::vector<auc::Scan> kept;
-        kept.reserve(idx.size());
-        for (std::size_t i : idx) kept.push_back(std::move(d->scans[i]));
-        scanIds.assign(idx.begin(), idx.end());
+        kept.reserve(selected.size());
+        for (std::size_t i : selected) kept.push_back(std::move(d->scans[i]));
+        scanIds.assign(selected.begin(), selected.end());
         d->scans = std::move(kept);
     }
     if (o.reverse) auc::proc::reverseRadius(*d);
     if (o.removeSpikes) auc::proc::removeSpikes(*d);
     if (o.offsetMode == ProcessingOptions::OffsetPoint) auc::proc::subtractOffsetAt(*d, o.offsetR1);
     if (o.offsetMode == ProcessingOptions::OffsetRegion) auc::proc::subtractBaselineRegion(*d, o.offsetR1, o.offsetR2);
+
+    res.scanIds = scanIds;
+    if (!job.plots) {
+        res.processed = d;
+        res.warning = warnings.join(QStringLiteral("; "));
+        return res;
+    }
 
     // 5. Plot data.
     auto s = std::make_shared<PlotSeries>();
@@ -586,10 +720,230 @@ AppController::Result AppController::runProcessing(Job job)
         res.integral = is;
     }
 
+    // 6. Spectra at a radius and the 3D surface (both read whole scans).
+    computeSpectrum(job, selected, res, warnings);
+    if (job.surface) res.surface = computeSurface(job, *d, res.surfaceError);
+
     res.processed = d;
     res.warning = warnings.join(QStringLiteral("; "));
     res.ms = double(t.nsecsElapsed()) / 1e6;
     return res;
+}
+
+void AppController::computeSpectrum(const Job& job, const std::vector<std::size_t>& selected, Result& res, QStringList& warnings)
+{
+    const auc::ChannelSource& src = *job.src;
+    const ChannelSettings& v = job.view;
+    const ProcessingOptions& o = job.opt;
+    if (!o.spectrum || src.wavelengths.size() < 2 || src.radius.empty() || src.xIsWavelength) return;
+
+    auto window = [&](const auc::ChannelSource& c, std::size_t& first, std::size_t& count) {
+        const std::size_t a = auc::proc::nearestIndex(c.radius, o.specR - o.specWidth);
+        const std::size_t b = auc::proc::nearestIndex(c.radius, o.specR + o.specWidth);
+        first = std::min(a, b);
+        count = std::max(a, b) - first + 1;
+    };
+    auto adjustDark = [&](auc::Dataset& d, const auc::ChannelSource& c) {
+        if (c.darkCurrent.empty() || v.darkSubtracted == c.darkSubtractedInFile) return;
+        const float sign = v.darkSubtracted ? -1.f : 1.f;
+        for (auto& sc : d.scans)
+            for (std::size_t k = 0; k < sc.values.size() && k < c.darkCurrent.size(); ++k) sc.values[k] += sign * c.darkCurrent[k];
+    };
+
+    std::size_t first = 0, count = 1;
+    window(src, first, count);
+    std::shared_ptr<const auc::Dataset> raw;
+    if (auc::IoResult r = src.spectra(first, count, raw); !r.ok()) {
+        warnings << tr("spectrum: %1").arg(r.message);
+        return;
+    }
+    auc::Dataset d = *raw;
+    adjustDark(d, src);
+    if (v.display == DisplayMode::Absorbance && !src.absorbanceData && src.valueLabel.isEmpty()) {
+        if (!job.ref || job.ref->absorbanceData) return;  // reported by the main pipeline
+        std::size_t rf = 0, rc = 1;
+        window(*job.ref, rf, rc);
+        std::shared_ptr<const auc::Dataset> rraw;
+        if (auc::IoResult r = job.ref->spectra(rf, rc, rraw); !r.ok()) {
+            warnings << tr("reference spectrum: %1").arg(r.message);
+            return;
+        }
+        auc::Dataset rd = *rraw;
+        adjustDark(rd, *job.ref);
+        if (rd.radius != d.radius) {
+            warnings << tr("spectrum: the reference channel has other wavelengths");
+            return;
+        }
+        const std::string err = v.refMode == ReferenceMode::ScanByScan
+            ? auc::proc::absorbanceScanByScan(d, rd)
+            : auc::proc::absorbanceMeanReference(d, rd, std::size_t(std::max(0, v.refFirst)),
+                                                 v.refLast < 0 ? SIZE_MAX : std::size_t(v.refLast));
+        if (!err.empty()) {
+            warnings << tr("spectrum: %1").arg(QString::fromStdString(err));
+            return;
+        }
+    }
+
+    auto s = std::make_shared<PlotSeries>();
+    s->x.assign(d.radius.begin(), d.radius.end());
+    std::size_t n = 0;
+    for (std::size_t i : selected) n += i < d.scans.size();
+    for (std::size_t i : selected) {
+        if (i >= d.scans.size()) continue;
+        const std::size_t k = s->y.size();
+        s->y.push_back(d.scans[i].values);
+        if (o.removeSpikes) s->y.back() = auc::proc::medianFilter(s->y.back(), 2, 0);
+        s->colors.push_back(Colormap::color(o.colormap, n > 1 ? double(k) / double(n - 1) : 0.0));
+        s->ids.push_back(int(i));
+        s->labels.push_back(tr("Scan %1 · %2 min").arg(i + 1).arg(d.scans[i].seconds / 60.0, 0, 'f', 1));
+    }
+    s->computeBounds();
+    res.spectrum = s;
+}
+
+SurfaceGridPtr AppController::computeSurface(const Job& job, const auc::Dataset& processed, QString& error)
+{
+    constexpr std::size_t kMaxCols = 400, kMaxRows = 300;
+    const auc::ChannelSource& src = *job.src;
+    const ChannelSettings& v = job.view;
+    auto g = std::make_shared<SurfaceGrid>();
+    g->yTitle = job.yLabel;
+    g->xTitle = src.xIsWavelength ? tr("Wavelength (nm)") : tr("Radius (cm)");
+
+    // Fills g->y from a row-major matrix [rows][np], picking rows/columns.
+    auto fill = [&](const std::vector<std::size_t>& rows, const std::vector<std::size_t>& cols, auto&& value) {
+        g->y.resize(rows.size() * cols.size());
+        float lo = std::numeric_limits<float>::max(), hi = std::numeric_limits<float>::lowest();
+        for (std::size_t r = 0; r < rows.size(); ++r)
+            for (std::size_t c = 0; c < cols.size(); ++c) {
+                const float y = value(rows[r], cols[c]);
+                g->y[r * cols.size() + c] = y;
+                if (std::isfinite(y)) lo = std::min(lo, y), hi = std::max(hi, y);
+            }
+        if (lo > hi) lo = hi = 0.f;
+        // Robust height range: single points (spikes, the 3.0 of invalid absorbance at the
+        // cell edges) would otherwise flatten the surface. Values are clipped to the 0.5 %
+        // and 99.5 % percentiles, widened by 5 %.
+        std::vector<float> finite;
+        finite.reserve(g->y.size());
+        for (float y : g->y)
+            if (std::isfinite(y)) finite.push_back(y);
+        if (finite.size() > 20) {
+            const auto at = [&](double q) {
+                auto it = finite.begin() + std::ptrdiff_t(q * double(finite.size() - 1));
+                std::nth_element(finite.begin(), it, finite.end());
+                return *it;
+            };
+            const float p0 = at(0.005), p1 = at(0.995);
+            const float pad = 0.05f * (p1 - p0);
+            if (p1 > p0 && (p0 - pad > lo || p1 + pad < hi)) {
+                lo = std::max(lo, p0 - pad);
+                hi = std::min(hi, p1 + pad);
+                g->clipped = true;
+            }
+        }
+        for (float& y : g->y)
+            y = std::isfinite(y) ? std::clamp(y, lo, hi) : lo;  // NaN: gaps outside a scan's radial range
+        g->yMin = lo;
+        g->yMax = hi > lo ? hi : lo + 1.f;
+    };
+
+    if (job.surfaceMode == SurfaceMode::RadiusTime) {
+        if (processed.scans.size() < 2 || processed.radius.size() < 2) {
+            error = tr("The surface needs at least two scans.");
+            return nullptr;
+        }
+        const auto cols = pickIndices(processed.radius.size(), kMaxCols);
+        const auto rows = pickIndices(processed.scans.size(), kMaxRows);
+        for (std::size_t c : cols) g->x.push_back(float(processed.radius[c]));
+        for (std::size_t r : rows)
+            g->z.push_back(float(job.surfaceOmega2t ? processed.scans[r].omega2t : processed.scans[r].seconds / 60.0));
+        g->zTitle = job.surfaceOmega2t ? tr("ω²t (rad²/s)") : tr("Time (min)");
+        // Rows must be monotonic in z (reverse/selection keep the order; ω²t could repeat).
+        for (std::size_t i = 1; i < g->z.size(); ++i)
+            if (!(g->z[i] > g->z[i - 1])) g->z[i] = std::nextafter(g->z[i - 1], std::numeric_limits<float>::max());
+        fill(rows, cols, [&](std::size_t r, std::size_t c) {
+            const auto& vals = processed.scans[r].values;
+            return c < vals.size() ? vals[c] : std::numeric_limits<float>::quiet_NaN();
+        });
+        g->title = tr("%1 scans · %2").arg(processed.scans.size()).arg(processed.scans.empty() ? QString()
+                                                                       : tr("%1 nm").arg(processed.scans.front().wavelength, 0, 'f', 1));
+        if (g->clipped) g->title += tr(" · height clipped to 99 %");
+        return g;
+    }
+
+    // Radius × wavelength for one scan.
+    const std::size_t nwl = src.wavelengths.size(), np = src.radius.size();
+    if (nwl < 2 || np < 2 || src.scans.empty()) {
+        error = tr("Radius × wavelength needs multi-wavelength data.");
+        return nullptr;
+    }
+    const std::size_t scan = job.surfaceScan < 0 ? src.scans.size() - 1 : std::min<std::size_t>(std::size_t(job.surfaceScan), src.scans.size() - 1);
+    std::vector<float> m;
+    if (auc::IoResult r = src.scanMatrix(scan, m); !r.ok()) {
+        error = r.message;
+        return nullptr;
+    }
+    auto adjustDark = [&](std::vector<float>& mat, const auc::ChannelSource& c) {
+        if (c.darkCurrent.empty() || v.darkSubtracted == c.darkSubtractedInFile) return;
+        const float sign = v.darkSubtracted ? -1.f : 1.f;
+        for (std::size_t k = 0; k < nwl && k < c.darkCurrent.size(); ++k)
+            for (std::size_t j = 0; j < np; ++j) mat[k * np + j] += sign * c.darkCurrent[k];
+    };
+    adjustDark(m, src);
+    if (v.display == DisplayMode::Absorbance && !src.absorbanceData && src.valueLabel.isEmpty()) {
+        const auc::ChannelSource* ref = job.ref.get();
+        if (!ref || ref->absorbanceData) {
+            error = tr("Choose a reference channel to show absorbance.");
+            return nullptr;
+        }
+        if (ref->wavelengths.size() != nwl || ref->radius.size() != np) {
+            error = tr("The reference channel has another wavelength/radius grid.");
+            return nullptr;
+        }
+        std::vector<float> rm;
+        if (v.refMode == ReferenceMode::ScanByScan) {
+            if (scan >= ref->scans.size()) {
+                error = tr("The reference has only %1 scans.").arg(ref->scans.size());
+                return nullptr;
+            }
+            if (auc::IoResult r = ref->scanMatrix(scan, rm); !r.ok()) {
+                error = r.message;
+                return nullptr;
+            }
+        } else {
+            const std::size_t a = std::min<std::size_t>(std::size_t(std::max(0, v.refFirst)), ref->scans.size() - 1);
+            const std::size_t b = v.refLast < 0 ? ref->scans.size() - 1 : std::min<std::size_t>(std::size_t(v.refLast), ref->scans.size() - 1);
+            std::vector<double> sum(nwl * np, 0.0);
+            std::vector<float> one;
+            std::size_t count = 0;
+            for (std::size_t i = std::min(a, b); i <= std::max(a, b); ++i) {
+                if (auc::IoResult r = ref->scanMatrix(i, one); !r.ok()) {
+                    error = r.message;
+                    return nullptr;
+                }
+                for (std::size_t q = 0; q < sum.size() && q < one.size(); ++q) sum[q] += one[q];
+                ++count;
+            }
+            rm.resize(sum.size());
+            for (std::size_t q = 0; q < sum.size(); ++q) rm[q] = float(sum[q] / double(std::max<std::size_t>(count, 1)));
+        }
+        adjustDark(rm, *ref);
+        std::vector<float> a(nwl * np);
+        for (std::size_t k = 0; k < nwl; ++k)
+            auc::proc::absorbance(std::span<const float>(m).subspan(k * np, np), std::span<const float>(rm).subspan(k * np, np),
+                                  std::span<float>(a).subspan(k * np, np));
+        m = std::move(a);
+    }
+    const auto cols = pickIndices(np, kMaxCols);
+    const auto rows = pickIndices(nwl, kMaxRows);
+    for (std::size_t c : cols) g->x.push_back(float(src.radius[c]));
+    for (std::size_t r : rows) g->z.push_back(float(src.wavelengths[r]));
+    g->zTitle = tr("Wavelength (nm)");
+    fill(rows, cols, [&](std::size_t r, std::size_t c) { return m[r * np + c]; });
+    g->title = tr("Scan %1 · %2 min").arg(scan + 1).arg(src.scans[scan].seconds / 60.0, 0, 'f', 1);
+    if (g->clipped) g->title += tr(" · height clipped to 99 %");
+    return g;
 }
 
 void AppController::reprocess(bool keepView)
@@ -601,17 +955,37 @@ void AppController::reprocess(bool keepView)
         m_pendingKeepView = m_pendingKeepView && keepView;
         return;
     }
-    Job job;
-    job.src = e->src;
-    job.view = e->view;
-    if (e->view.reference >= 0 && e->view.reference < m_entries.size()) job.ref = m_entries[e->view.reference].src;
-    job.opt = currentOptions();
-    job.ti = e->ti;
-    job.ri = e->ri;
+    Job job = makeJob(*e);
     job.generation = ++m_generation;
     job.keepView = keepView;
     setBusy(true);
     m_future.setFuture(QtConcurrent::run(&AppController::runProcessing, std::move(job)));
+}
+
+AppController::Job AppController::makeJob(const Entry& e) const
+{
+    Job job;
+    job.src = e.src;
+    job.view = e.view;
+    if (e.view.reference >= 0 && e.view.reference < m_entries.size()) job.ref = m_entries[e.view.reference].src;
+    job.opt = currentOptions();
+    job.opt.spectrum = job.opt.spectrum && m_spectrumPlot;
+    job.ti = e.ti;
+    job.ri = e.ri;
+    job.surface = m_surfaceActive;
+    job.surfaceMode = hasSpectra() ? m_surfaceMode : SurfaceMode::RadiusTime;
+    job.surfaceOmega2t = m_surfaceOmega2t;
+    job.surfaceScan = m_surfaceScan;
+    job.yLabel = yLabel();
+    return job;
+}
+
+QString AppController::spectrumKey() const
+{
+    // The spectrum plot keeps its zoom while only the radius window or options change.
+    const Entry* e = current();
+    if (!e) return {};
+    return QStringLiteral("%1|%2|%3|%4").arg(quintptr(e->src.get())).arg(int(e->view.display)).arg(e->view.reference).arg(int(e->view.refMode));
 }
 
 void AppController::onProcessed()
@@ -633,13 +1007,28 @@ void AppController::onProcessed()
         setStatus(r.error);
         if (m_scanPlot) m_scanPlot->setSeries(nullptr);
         if (m_integralPlot) m_integralPlot->setSeries(nullptr);
+        if (m_spectrumPlot) m_spectrumPlot->setSeries(nullptr);
         m_processed.reset();
+        if (m_surface) {
+            m_surface.reset();
+            emit surfaceChanged();
+        }
         return;
     }
     if (!r.warning.isEmpty()) setStatus(tr("Note: %1").arg(r.warning));
     m_processed = r.processed;
     if (m_scanPlot) m_scanPlot->setSeries(r.scans, r.keepView);
     if (m_integralPlot) m_integralPlot->setSeries(r.integral, false);
+    if (m_spectrumPlot) {
+        const QString key = spectrumKey();
+        m_spectrumPlot->setSeries(r.spectrum, key == m_lastSpectrumKey && m_spectrumPlot->hasData());
+        m_lastSpectrumKey = r.spectrum ? key : QString();
+    }
+    if (r.surface || m_surface) {
+        m_surface = r.surface;
+        emit surfaceChanged();
+    }
+    if (!r.surfaceError.isEmpty() && r.warning.isEmpty()) setStatus(r.surfaceError);
     emit processed(r.ms);
 }
 
@@ -649,6 +1038,169 @@ void AppController::setScanPlot(ScanPlot* p)
     m_scanPlot = p;
     emit scanPlotChanged();
     reprocess(false);
+}
+
+void AppController::setSpeedPlot(ScanPlot* p)
+{
+    if (m_speedPlot == p) return;
+    m_speedPlot = p;
+    emit runPlotsChanged();
+    updateRunPlots();
+}
+
+void AppController::setTemperaturePlot(ScanPlot* p)
+{
+    if (m_temperaturePlot == p) return;
+    m_temperaturePlot = p;
+    emit runPlotsChanged();
+    updateRunPlots();
+}
+
+void AppController::setOmega2tPlot(ScanPlot* p)
+{
+    if (m_omega2tPlot == p) return;
+    m_omega2tPlot = p;
+    emit runPlotsChanged();
+    updateRunPlots();
+}
+
+void AppController::updateRunPlots()
+{
+    // Rotor speed, temperature and ω²t of every scan against time, from the scan headers
+    // (no readings needed, so done on the GUI thread).
+    const auc::ChannelSource* c = currentSrc();
+    auto set = [](ScanPlot* p, PlotSeriesPtr series, const QHash<int, CurveStyle>& styles) {
+        if (!p) return;
+        p->setCurveStyles(styles);
+        p->setSeries(std::move(series), false);
+    };
+    if (!c || c->scans.empty()) {
+        set(m_speedPlot, nullptr, {});
+        set(m_temperaturePlot, nullptr, {});
+        set(m_omega2tPlot, nullptr, {});
+        if (!m_runConditions.isEmpty()) {
+            m_runConditions.clear();
+            emit runConditionsChanged();
+        }
+        return;
+    }
+    const auto& sc = c->scans;
+    const std::size_t n = sc.size();
+    std::vector<float> minutes(n), measured(n), setSpeed(n), temp(n), w2tf(n), line(n);
+    std::vector<double> seconds(n), w2t(n), rpm(n);
+    bool hasSet = false;
+    for (std::size_t i = 0; i < n; ++i) {
+        minutes[i] = float(sc[i].seconds / 60.0);
+        seconds[i] = sc[i].seconds;
+        w2t[i] = sc[i].omega2t;
+        rpm[i] = sc[i].rpm;
+        measured[i] = float(sc[i].rpm);
+        setSpeed[i] = float(sc[i].setRpm);
+        hasSet = hasSet || sc[i].setRpm > 0;
+        temp[i] = float(sc[i].temperature);
+        w2tf[i] = float(sc[i].omega2t);
+    }
+    using Curves = std::vector<std::pair<std::vector<float>, QColor>>;
+    auto series = [&](Curves curves, const QStringList& labels) {
+        auto s = std::make_shared<PlotSeries>();
+        s->x = minutes;
+        for (std::size_t k = 0; k < curves.size(); ++k) {
+            s->y.push_back(std::move(curves[k].first));
+            s->colors.push_back(curves[k].second);
+            s->ids.push_back(int(k));
+            s->labels.push_back(labels.value(int(k)));
+        }
+        s->computeBounds();
+        return PlotSeriesPtr(s);
+    };
+    CurveStyle points;
+    points.marker = CurveStyle::Circle;
+    points.markerSize = 5.0f;
+    CurveStyle dashed;
+    dashed.line = CurveStyle::Dash;
+    dashed.width = 1.5f;
+
+    // Speed: measured, and the set speed where the format stores it.
+    Curves speedCurves{{measured, QColor(0x1d, 0x4e, 0xd8)}};
+    if (hasSet) speedCurves.push_back({setSpeed, QColor(0x9c, 0xa3, 0xaf)});
+    set(m_speedPlot, series(std::move(speedCurves), {tr("measured"), tr("set")}), {{0, points}, {1, dashed}});
+    set(m_temperaturePlot, series({{temp, QColor(0xdc, 0x26, 0x26)}}, {tr("temperature")}), {{0, points}});
+
+    // ω²t with the straight line ω²·(t − t₀) through the scans at constant speed.
+    const auc::proc::Omega2tFit fit = auc::proc::fitOmega2t(seconds, w2t, rpm);
+    for (std::size_t i = 0; i < n; ++i) line[i] = float(fit.slope * seconds[i] + fit.intercept);
+    Curves w2tCurves{{w2tf, QColor(0x05, 0x96, 0x69)}};
+    if (fit.valid) w2tCurves.push_back({line, QColor(0x6b, 0x72, 0x80)});
+    set(m_omega2tPlot, series(std::move(w2tCurves), {tr("ω²t"), tr("fit")}), {{0, points}, {1, dashed}});
+
+    const auto [rmin, rmax] = std::minmax_element(rpm.begin(), rpm.end());
+    const auto [tmin, tmax] = std::minmax_element(temp.begin(), temp.end());
+    QStringList parts;
+    parts << tr("%n scan(s), %1–%2 min", nullptr, int(n)).arg(minutes.front(), 0, 'f', 1).arg(minutes.back(), 0, 'f', 1);
+    parts << tr("speed %1–%2 rpm").arg(*rmin, 0, 'f', 0).arg(*rmax, 0, 'f', 0);
+    parts << tr("temperature %1–%2 °C").arg(*tmin, 0, 'f', 1).arg(*tmax, 0, 'f', 1);
+    if (fit.valid)
+        parts << tr("ω²t fit over %1 scans: %2 rpm effective, t₀ = %3 s, rms %4 %")
+                     .arg(fit.used)
+                     .arg(fit.rpm, 0, 'f', 0)
+                     .arg(fit.t0, 0, 'f', 1)
+                     .arg(fit.rms * 100.0, 0, 'g', 2);
+    const QString text = parts.join(QStringLiteral(" · "));
+    if (text != m_runConditions) {
+        m_runConditions = text;
+        emit runConditionsChanged();
+    }
+}
+
+void AppController::setSpectrumPlot(ScanPlot* p)
+{
+    if (m_spectrumPlot == p) return;
+    m_spectrumPlot = p;
+    emit spectrumPlotChanged();
+    if (m_optSpectrum) reprocess(true);
+}
+
+bool AppController::surfaceSupported()
+{
+#ifdef AUC_HAVE_GRAPHS
+    return true;
+#else
+    return false;
+#endif
+}
+
+void AppController::setSurfaceActive(bool on)
+{
+    if (on == m_surfaceActive) return;
+    m_surfaceActive = on;
+    emit surfaceSettingsChanged();
+    if (on) reprocess(true);
+}
+
+void AppController::setSurfaceMode(int m)
+{
+    const auto mode = m == 1 ? SurfaceMode::RadiusWavelength : SurfaceMode::RadiusTime;
+    if (mode == m_surfaceMode) return;
+    m_surfaceMode = mode;
+    emit surfaceSettingsChanged();
+    if (m_surfaceActive) reprocess(true);
+}
+
+void AppController::setSurfaceOmega2t(bool on)
+{
+    if (on == m_surfaceOmega2t) return;
+    m_surfaceOmega2t = on;
+    emit surfaceSettingsChanged();
+    if (m_surfaceActive) reprocess(true);
+}
+
+void AppController::setSurfaceScan(int s)
+{
+    s = std::max(-1, s);
+    if (s == m_surfaceScan) return;
+    m_surfaceScan = s;
+    emit surfaceSettingsChanged();
+    if (m_surfaceActive) reprocess(true);
 }
 
 void AppController::setIntegralPlot(ScanPlot* p)
@@ -679,29 +1231,156 @@ void AppController::setBusy(bool b)
 bool AppController::exportCsv(const QUrl& url)
 {
     if (!m_processed) return false;
-    QSaveFile f(url.toLocalFile());
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        setStatus(tr("Export failed: %1").arg(f.errorString()));
-        return false;
-    }
-    QTextStream ts(&f);
     const auto& d = *m_processed;
-    ts << "# " << runInfo() << "\n# " << yLabel() << "\n";
-    ts << "radius_cm";
-    for (const auto& s : d.scans) ts << ",t=" << s.seconds << "s";
-    ts << "\n";
-    for (std::size_t j = 0; j < d.radius.size(); ++j) {
-        ts << QString::number(d.radius[j], 'f', 5);
-        for (const auto& s : d.scans) ts << ',' << (j < s.values.size() ? s.values[j] : 0.f);
-        ts << "\n";
-    }
-    ts.flush();
-    if (!f.commit()) {
-        setStatus(tr("Export failed: %1").arg(f.errorString()));
+    QString err;
+    const auto* c = currentSrc();
+    if (!writeCsv(d, url.toLocalFile(), {runInfo(), yLabel()}, c && c->xIsWavelength ? QStringLiteral("wavelength_nm") : QStringLiteral("radius_cm"), &err)) {
+        setStatus(tr("Export failed: %1").arg(err));
         return false;
     }
     setStatus(tr("Exported %1 scans to %2").arg(d.scanCount()).arg(QFileInfo(url.toLocalFile()).fileName()));
     return true;
+}
+
+void AppController::exportData(int format, const QUrl& target, bool allWavelengths, double fromNm, double toNm, int step)
+{
+    const Entry* e = current();
+    if (!e || m_export.isRunning()) return;
+    const auto fmt = ExportFormat(std::clamp(format, 0, 3));
+    Job base = makeJob(*e);
+    base.plots = false;
+    base.surface = false;
+    base.opt.spectrum = false;
+    base.opt.integrate = false;
+
+    // Wavelength indices to export; SIZE_MAX = the current view (wavelength or MWA range).
+    std::vector<std::size_t> indices;
+    const auto& wl = e->src->wavelengths;
+    if (allWavelengths && wl.size() > 1) {
+        base.view.mwa = false;
+        const double lo = std::min(fromNm, toNm), hi = std::max(fromNm, toNm);
+        int n = 0;
+        for (std::size_t k = 0; k < wl.size(); ++k)
+            if (wl[k] >= lo - 1e-6 && wl[k] <= hi + 1e-6 && n++ % std::max(1, step) == 0) indices.push_back(k);
+        if (indices.empty()) {
+            setStatus(tr("Export: no wavelength in %1–%2 nm").arg(lo).arg(hi));
+            return;
+        }
+    } else {
+        indices.push_back(SIZE_MAX);
+    }
+
+    const QString path = target.toLocalFile();
+    const QString run = e->src->runId;
+    const QStringList header{runInfo(), yLabel()};
+    const QString yName = yLabel(), xName = xLabel();
+    const bool xWl = e->src->xIsWavelength;
+    setStatus(tr("Exporting…"));
+    m_export.setFuture(QtConcurrent::run([=]() -> QString {
+        int files = 0;
+        std::size_t scans = 0;
+        for (std::size_t k : indices) {
+            Job j = base;
+            if (k != SIZE_MAX) j.view.wavelengthIndex = k;
+            const Result r = runProcessing(j);
+            if (!r.error.isEmpty()) return QStringLiteral("!") + r.error;
+            const auc::Dataset& d = *r.processed;
+            if (d.scans.empty()) continue;
+            scans = d.scans.size();
+            const double nm = d.scans.front().wavelength;
+            const QString file = indices.size() > 1 ? withWavelength(path, nm) : path;
+            QString err;
+            switch (fmt) {
+            case ExportFormat::Csv:
+                if (!writeCsv(d, file, header, xWl ? QStringLiteral("wavelength_nm") : QStringLiteral("radius_cm"), &err))
+                    return QStringLiteral("!") + err;
+                ++files;
+                break;
+            case ExportFormat::Origin: {
+                auto split = [](const QString& label, QString& name, QString& unit) {
+                    const qsizetype p = label.lastIndexOf(QLatin1Char('('));
+                    name = p > 0 ? label.left(p).trimmed() : label;
+                    unit = p > 0 ? label.mid(p + 1).chopped(1) : QString();
+                };
+                auc::exporter::OriginColumns cols;
+                split(xName, cols.xName, cols.xUnit);
+                split(yName, cols.yName, cols.yUnit);
+                for (std::size_t i = 0; i < d.scans.size(); ++i)
+                    cols.comments.push_back(tr("scan %1, t = %2 s").arg(i < r.scanIds.size() ? r.scanIds[i] + 1 : int(i) + 1).arg(d.scans[i].seconds, 0, 'f', 0));
+                if (auto res = auc::exporter::writeOrigin(d, file, cols); !res.ok()) return QStringLiteral("!") + res.message;
+                ++files;
+                break;
+            }
+            case ExportFormat::Beckman: {
+                std::vector<int> numbers;
+                for (int id : r.scanIds)
+                    numbers.push_back(id >= 0 && std::size_t(id) < j.src->scans.size() ? j.src->scans[std::size_t(id)].number : id + 1);
+                QStringList written;
+                if (auto res = auc::exporter::writeBeckman(d, path, numbers, &written); !res.ok()) return QStringLiteral("!") + res.message;
+                files += int(written.size());
+                break;
+            }
+            case ExportFormat::UltraScan:
+                if (auto res = auc::exporter::writeUs3(d, path, run); !res.ok()) return QStringLiteral("!") + res.message;
+                ++files;
+                break;
+            }
+        }
+        return tr("Exported %n wavelength(s), %1 scans each, %2 file(s) to %3", nullptr, int(indices.size()))
+            .arg(scans)
+            .arg(files)
+            .arg(QDir::toNativeSeparators(path));
+    }));
+    emit exportingChanged();
+}
+
+bool AppController::canPrint()
+{
+#ifdef AUC_HAVE_PRINT
+    return true;
+#else
+    return false;
+#endif
+}
+
+void AppController::printImage(const QVariant& image, const QString& caption)
+{
+#ifdef AUC_HAVE_PRINT
+    const QImage img = image.value<QImage>();
+    QPrinter printer(QPrinter::HighResolution);
+    printer.setPageOrientation(QPageLayout::Landscape);
+    printer.setDocName(caption);
+    QPrintDialog dlg(&printer);
+    dlg.setWindowTitle(tr("Print graph"));
+    if (dlg.exec() != QDialog::Accepted) return;
+    paintPage(&printer, img, caption);
+    setStatus(tr("Printed"));
+#else
+    Q_UNUSED(image);
+    Q_UNUSED(caption);
+    setStatus(tr("Printing is not available in this build"));
+#endif
+}
+
+bool AppController::saveImage(const QVariant& image, const QUrl& url, const QString& caption)
+{
+    const QImage img = image.value<QImage>();
+    const QString path = url.toLocalFile();
+    bool ok = false;
+    if (QFileInfo(path).suffix().compare(QLatin1String("pdf"), Qt::CaseInsensitive) == 0) {
+        QPdfWriter pdf(path);
+        pdf.setPageSize(QPageSize(QPageSize::A4));
+        pdf.setPageOrientation(QPageLayout::Landscape);
+        pdf.setResolution(300);
+        pdf.setTitle(caption);
+        pdf.setCreator(QStringLiteral("AUCDataTool"));
+        paintPage(&pdf, img, caption);
+        ok = QFileInfo::exists(path);
+    } else {
+        ok = img.save(path);
+    }
+    setStatus(ok ? tr("Saved graph to %1").arg(QFileInfo(path).fileName()) : tr("Could not save %1").arg(path));
+    return ok;
 }
 
 // ---------------------------------------------------------------------------------------
