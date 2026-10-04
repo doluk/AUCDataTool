@@ -181,7 +181,10 @@ void AppController::closeAll()
     m_entries.clear();
     m_current = -1;
     m_processed.reset();
-    if (m_scanPlot) m_scanPlot->setSeries(nullptr);
+    if (m_scanPlot) {
+        m_scanPlot->setSeries(nullptr);
+        m_scanPlot->setCurveStyles({});
+    }
     if (m_integralPlot) m_integralPlot->setSeries(nullptr);
     emit channelsChanged();
     emit currentIndexChanged();
@@ -223,8 +226,13 @@ void AppController::initSettings(int index)
 void AppController::setCurrentIndex(int i)
 {
     if (i < -1 || i >= m_entries.size() || i == m_current) return;
+    if (Entry* e = current(); e && m_scanPlot) e->view.curveStyles = m_scanPlot->curveStyles();
     m_current = i;
     if (i >= 0) initSettings(i);
+    if (m_scanPlot) {
+        m_scanPlot->setSelectedCurve(-1);
+        m_scanPlot->setCurveStyles(i >= 0 ? m_entries[i].view.curveStyles : QHash<int, CurveStyle>{});
+    }
     emit currentIndexChanged();
     emit datasetChanged();
     emit viewChanged();
@@ -533,12 +541,14 @@ AppController::Result AppController::runProcessing(Job job)
 
     // 4. Scan selection and corrections.
     const auto& o = job.opt;
+    std::vector<int> scanIds;  // original scan index of each kept scan (curve identity)
     if (!d->scans.empty()) {
         const std::size_t last = o.lastScan < 0 ? d->scanCount() - 1 : std::size_t(o.lastScan);
         const auto idx = auc::proc::selectScans(d->scanCount(), std::size_t(o.firstScan), last, std::size_t(o.everyNth));
         std::vector<auc::Scan> kept;
         kept.reserve(idx.size());
         for (std::size_t i : idx) kept.push_back(std::move(d->scans[i]));
+        scanIds.assign(idx.begin(), idx.end());
         d->scans = std::move(kept);
     }
     if (o.reverse) auc::proc::reverseRadius(*d);
@@ -555,6 +565,9 @@ AppController::Result AppController::runProcessing(Job job)
     for (std::size_t i = 0; i < n; ++i) {
         s->y.push_back(d->scans[i].values);
         s->colors.push_back(Colormap::color(o.colormap, n > 1 ? double(i) / double(n - 1) : 0.0));
+        const int id = i < scanIds.size() ? scanIds[i] : int(i);
+        s->ids.push_back(id);
+        s->labels.push_back(tr("Scan %1 · %2 min").arg(id + 1).arg(d->scans[i].seconds / 60.0, 0, 'f', 1));
     }
     s->computeBounds();
     res.scans = s;

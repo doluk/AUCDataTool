@@ -20,6 +20,7 @@ qt_add_qml_module(aucdatatool
         AppController.h AppController.cpp
         ScanPlot.h ScanPlot.cpp
         PlotSeries.h
+        CurveStyle.h
         Colormap.h Colormap.cpp
 )
 
@@ -43,3 +44,22 @@ install(TARGETS aucdatatool
     BUNDLE DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+# Bundle Qt libraries, plugins and QML imports next to the executable at install time
+# (windeployqt / macdeployqt / Qt's own Linux deployment, the latter needs Qt >= 6.5).
+# Distribution packages that depend on system Qt set AUC_DEPLOY_QT=OFF.
+option(AUC_DEPLOY_QT "Bundle the Qt runtime on install" ON)
+if(AUC_DEPLOY_QT)
+    # Qt 6.4 names the output argument FILENAME_VARIABLE (OUTPUT_SCRIPT since 6.5).
+    if(Qt6_VERSION VERSION_LESS 6.5)
+        set(deploy_output FILENAME_VARIABLE)
+    else()
+        set(deploy_output OUTPUT_SCRIPT)
+    endif()
+    qt_generate_deploy_qml_app_script(
+        TARGET aucdatatool
+        ${deploy_output} deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+    install(SCRIPT ${deploy_script})
+endif()

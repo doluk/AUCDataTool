@@ -15,6 +15,8 @@ Item {
     /// [{ value, color, label, key }] – vertical lines in data coordinates, draggable.
     property var markers: []
     signal markerMoved(string key, real value)
+    /// Left click selects the curve under the cursor (plot.selectedCurve).
+    property bool curvesSelectable: false
 
     readonly property int leftMargin: 66
     readonly property int bottomMargin: 46
@@ -47,11 +49,15 @@ Item {
         clip: true
         z: 1
         // Markers (drawn above the curves, clipped with the plot)
+        // The model is the marker count, not the array: `markers` is rebuilt on every value
+        // change, and an array model would recreate the delegate under the cursor and end
+        // the drag after a single mouse move.
         Repeater {
-            model: root.markers
+            model: root.markers.length
             delegate: Item {
                 id: marker
-                required property var modelData
+                required property int index
+                readonly property var modelData: root.markers[index] ?? { value: 0, color: "transparent", label: "", key: "" }
                 property real px: { plot.viewRect; plot.width; return plot.toPixelX(modelData.value) }
                 x: px - 6
                 y: 0
@@ -203,6 +209,9 @@ Item {
             if (band.visible) {
                 band.visible = false
                 plot.zoomToPixelRect(start.x, start.y, e.x, e.y)
+            } else if (e.button === Qt.LeftButton && root.curvesSelectable
+                       && Math.abs(e.x - start.x) + Math.abs(e.y - start.y) < 4) {
+                plot.selectedCurve = plot.curveAt(e.x, e.y)  // click (not a pan)
             }
         }
         onDoubleClicked: plot.autoscale()

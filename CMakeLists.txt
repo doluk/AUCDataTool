@@ -30,6 +30,7 @@ add_subdirectory(core)
 
 if(AUC_BUILD_APP)
     add_subdirectory(app)
+    include(cmake/Packaging.cmake)
 endif()
 
 if(AUC_BUILD_TOOLS)

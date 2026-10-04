@@ -18,6 +18,7 @@ Targets Windows, macOS and Linux; the UI is Qt Quick so an Android build is poss
 | Intensity ↔ absorbance with a reference channel (scan by scan or mean of reference scans) | done |
 | Dark current (`.mw` v1.2): toggle subtracted/not subtracted | done |
 | GPU scan plot (all scans in one pass, zoom/pan without re-upload) | done |
+| Curve styles: colour, width, dash pattern, markers, visibility per scan (click to select) and for all scans | done |
 | Scan range / every n-th, reverse, spike filter, offset (point, baseline region) | done |
 | Radial integration (∫A dr, ∫A·r dr) + integral-vs-time plot | done |
 | TI/RI noise: load UltraScan noise XML or plain text | done |
@@ -38,7 +39,19 @@ ctest --test-dir build --output-on-failure
 ./build/app/AUCDataTool path/to/run/         # files or folders
 ```
 
+With [vcpkg](https://vcpkg.io), Qt is taken from the `vcpkg.json` manifest:
+`cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake`.
+
 Options: `-DAUC_BUILD_APP=OFF` builds only the core library, tools and tests (needs only Qt Core).
+
+### Installers
+
+`cpack --config build/CPackConfig.cmake -C Release -B build/package` bundles Qt and produces
+an NSIS installer (`.exe`, Windows), a disk image (`.dmg`, macOS) or `.deb`, `.rpm` (both install
+to `/opt/AUCDataTool`) and a relocatable `.tar.gz` (Linux; Linux deployment needs Qt ≥ 6.5).
+An Arch Linux package built against system Qt comes from `cd packaging/arch && makepkg -s`.
+CI builds all of these for every push as
+workflow artifacts and attaches them to a GitHub release when a `v*` tag is pushed.
 
 ### Tools
 

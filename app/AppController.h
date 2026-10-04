@@ -41,6 +41,7 @@ struct ChannelSettings {
     ReferenceMode refMode = ReferenceMode::ScanByScan;
     int refFirst = 0, refLast = -1;
     bool darkSubtracted = false;
+    QHash<int, CurveStyle> curveStyles;  ///< individual scan styles, by scan index
     bool initialised = false;
 };
 

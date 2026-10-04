@@ -51,6 +51,7 @@ ApplicationWindow {
     }
 
     Shortcut { sequences: [StandardKey.Open]; onActivated: fileDialog.open() }
+    Shortcut { sequence: "Esc"; onActivated: scanView.plot.selectedCurve = -1 }
     Shortcut { sequence: "F1"; onActivated: scanView.plot.autoscale() }  // same key as the LabVIEW viewer
     Shortcut { sequences: ["Ctrl+Right", "PgUp"]; onActivated: ctrl.stepWavelength(1) }
     Shortcut { sequences: ["Ctrl+Left", "PgDown"]; onActivated: ctrl.stepWavelength(-1) }
@@ -106,12 +107,13 @@ ApplicationWindow {
 
             PlotView {
                 id: scanView
+                curvesSelectable: true
                 SplitView.fillHeight: true
                 SplitView.minimumHeight: 200
                 xLabel: qsTr("Radius (cm)")
                 yLabel: ctrl.yLabel
                 placeholder: ctrl.processingError !== "" ? ctrl.processingError
-                             : qsTr("Open .auc/.mwrs/.mw files or a data folder.\nWheel: zoom · Drag: pan · Right-drag: zoom box · Double-click/F1: autoscale\nCtrl+←/→: previous/next wavelength")
+                             : qsTr("Open .auc/.mwrs/.mw files or a data folder.\nWheel: zoom · Drag: pan · Right-drag: zoom box · Double-click/F1: autoscale · Click: select curve\nCtrl+←/→: previous/next wavelength")
                 markers: {
                     var m = []
                     if (ctrl.offsetMode === 1)
