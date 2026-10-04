@@ -81,11 +81,7 @@ int main(int argc, char** argv)
                                  {QStringLiteral("height"), size.value(1).toInt()}});
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     engine.loadFromModule("Auc.DataTool", "Main");
-#else
-    engine.load(QUrl(QStringLiteral("qrc:/Auc/DataTool/qml/Main.qml")));
-#endif
     if (engine.rootObjects().isEmpty()) return 1;
 
     auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());

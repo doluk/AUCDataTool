@@ -40,6 +40,26 @@ set_target_properties(aucdatatool PROPERTIES
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
 )
 
+# vcpkg's applocal step copies only the DLLs the executable links directly, not
+# the Qt plugins, QML modules or their dependencies, and vcpkg's Qt looks for
+# those under Qt6/ rather than next to the executable. Deploy them into the build
+# directory and add a qt.conf so it runs as-is.
+if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR)
+    set(_auc_qt_tools "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/Qt6/bin")
+    add_custom_command(TARGET aucdatatool POST_BUILD
+        COMMAND "$<IF:$<CONFIG:Debug>,${_auc_qt_tools}/windeployqt.debug.bat,${_auc_qt_tools}/windeployqt6.exe>"
+                --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/qml"
+                --no-translations --no-compiler-runtime
+                "$<TARGET_FILE:aucdatatool>"
+        VERBATIM)
+    file(GENERATE OUTPUT "$<TARGET_FILE_DIR:aucdatatool>/qt.conf" CONTENT
+"[Paths]
+Prefix=.
+Plugins=.
+QmlImports=qml
+")
+endif()
+
 install(TARGETS aucdatatool
     BUNDLE DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

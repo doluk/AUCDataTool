@@ -16,9 +16,8 @@ option(AUC_BUILD_APP   "Build the Qt Quick application" ON)
 option(AUC_BUILD_TESTS "Build unit tests"               ON)
 option(AUC_BUILD_TOOLS "Build command-line tools"       ON)
 
-# Qt 6.4 is the minimum that builds; Qt 6.8 LTS is the recommended target.
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core)
-qt_standard_project_setup()
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core)
+qt_standard_project_setup(REQUIRES 6.8)
 
 if(MSVC)
     add_compile_options(/W4 /permissive-)
