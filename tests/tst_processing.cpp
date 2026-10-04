@@ -54,6 +54,36 @@ private slots:
         QVERIFY(near(a[3], 3.0));        // reference too low
     }
 
+    void absorbanceWithReference()
+    {
+        Dataset sample, ref;
+        for (int j = 0; j < 3; ++j) sample.radius.push_back(6.0 + 0.01 * j);
+        ref.radius = sample.radius;
+        for (int i = 0; i < 3; ++i) {
+            Scan s, r;
+            s.values = {1000.f, 1000.f, 1000.f};
+            r.values = {float(10000 * (i + 1)), 10000.f, 1000.f};
+            sample.scans.push_back(s);
+            if (i < 2) ref.scans.push_back(r);  // reference has one scan less
+        }
+        Dataset a = sample;
+        QVERIFY(absorbanceScanByScan(a, ref).empty());
+        QCOMPARE(a.scanCount(), std::size_t(2));
+        QCOMPARE(a.type, DataType::RadialAbsorbance);
+        QVERIFY(near(a.scans[1].values[0], std::log10(20.0), 1e-6));  // paired with ref scan 1
+        QVERIFY(near(a.scans[0].values[2], 0.0, 1e-6));
+
+        Dataset m = sample;
+        QVERIFY(absorbanceMeanReference(m, ref, 0, SIZE_MAX).empty());  // I0 = mean(10000, 20000)
+        QCOMPARE(m.scanCount(), std::size_t(3));
+        QVERIFY(near(m.scans[2].values[0], std::log10(15.0), 1e-6));
+
+        Dataset bad = sample;
+        bad.radius.push_back(6.03);
+        QVERIFY(!absorbanceScanByScan(bad, ref).empty());
+        QVERIFY(!absorbanceMeanReference(m, ref, 5, 9).empty());
+    }
+
     void meanOfSelectedScans()
     {
         const Dataset d = ramp(4, 3);

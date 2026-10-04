@@ -27,9 +27,164 @@ ColumnLayout {
     }
 
     GroupBox {
-        title: qsTr("Scans")
+        title: qsTr("Wavelength")
         Layout.fillWidth: true
         Layout.topMargin: 6
+        visible: root.controller.wavelengthCount > 1
+        ColumnLayout {
+            anchors.fill: parent
+            RowLayout {
+                Layout.fillWidth: true
+                ToolButton {
+                    text: "◀"
+                    enabled: !root.controller.mwa && root.controller.wavelengthIndex > 0
+                    onClicked: root.controller.stepWavelength(-1)
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Previous wavelength (Ctrl+←)")
+                }
+                Label {
+                    text: root.controller.mwa
+                          ? qsTr("%1 – %2 nm").arg(root.controller.mwaFrom.toFixed(1)).arg(root.controller.mwaTo.toFixed(1))
+                          : qsTr("%1 nm").arg(root.controller.wavelength.toFixed(1))
+                    font.bold: true
+                    font.pixelSize: 15
+                    horizontalAlignment: Text.AlignHCenter
+                    Layout.fillWidth: true
+                }
+                ToolButton {
+                    text: "▶"
+                    enabled: !root.controller.mwa && root.controller.wavelengthIndex < root.controller.wavelengthCount - 1
+                    onClicked: root.controller.stepWavelength(1)
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Next wavelength (Ctrl+→)")
+                }
+            }
+            Slider {
+                Layout.fillWidth: true
+                enabled: !root.controller.mwa
+                from: 0
+                to: Math.max(1, root.controller.wavelengthCount - 1)
+                stepSize: 1
+                snapMode: Slider.SnapAlways
+                value: root.controller.wavelengthIndex
+                onMoved: root.controller.wavelengthIndex = Math.round(value)
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: root.controller.wavelengthMin.toFixed(0) + " nm"; font.pixelSize: 11; opacity: 0.6 }
+                Item { Layout.fillWidth: true }
+                Label { text: qsTr("%1 wavelengths").arg(root.controller.wavelengthCount); font.pixelSize: 11; opacity: 0.6 }
+                Item { Layout.fillWidth: true }
+                Label { text: root.controller.wavelengthMax.toFixed(0) + " nm"; font.pixelSize: 11; opacity: 0.6 }
+            }
+            CheckBox {
+                text: qsTr("Average wavelength range (MWA)")
+                checked: root.controller.mwa
+                onToggled: root.controller.mwa = checked
+            }
+            GridLayout {
+                columns: 4
+                visible: root.controller.mwa
+                Layout.fillWidth: true
+                Label { text: qsTr("from") }
+                NumberField {
+                    Layout.fillWidth: true
+                    decimals: 1
+                    value: root.controller.mwaFrom
+                    onCommitted: (v) => root.controller.mwaFrom = v
+                }
+                Label { text: qsTr("to") }
+                NumberField {
+                    Layout.fillWidth: true
+                    decimals: 1
+                    value: root.controller.mwaTo
+                    onCommitted: (v) => root.controller.mwaTo = v
+                }
+            }
+        }
+    }
+
+    GroupBox {
+        title: qsTr("Data")
+        Layout.fillWidth: true
+        Layout.topMargin: root.controller.wavelengthCount > 1 ? 0 : 6
+        enabled: root.hasData
+        ColumnLayout {
+            anchors.fill: parent
+            Label {
+                visible: root.controller.dataIsAbsorbance
+                text: qsTr("The file contains absorbance.")
+                opacity: 0.7
+            }
+            RowLayout {
+                visible: !root.controller.dataIsAbsorbance
+                RadioButton {
+                    text: qsTr("Intensity")
+                    checked: root.controller.displayMode === 0
+                    onClicked: root.controller.displayMode = 0
+                }
+                RadioButton {
+                    text: qsTr("Absorbance")
+                    checked: root.controller.displayMode === 1
+                    onClicked: root.controller.displayMode = 1
+                }
+            }
+            Label {
+                text: qsTr("Reference (I₀)")
+                visible: !root.controller.dataIsAbsorbance
+                Layout.topMargin: 4
+            }
+            ComboBox {
+                id: refCombo
+                visible: !root.controller.dataIsAbsorbance
+                Layout.fillWidth: true
+                model: root.controller.referenceChoices
+                currentIndex: root.controller.referenceChoice
+                onActivated: (i) => root.controller.referenceChoice = i
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Channel whose intensity is used as I₀ in A = −log₁₀(I/I₀). Default: channel B of the same cell.")
+            }
+            ComboBox {
+                visible: !root.controller.dataIsAbsorbance && root.controller.referenceChoice > 0
+                Layout.fillWidth: true
+                model: [qsTr("Scan by scan"), qsTr("Mean of reference scans")]
+                currentIndex: root.controller.referenceMode
+                onActivated: (i) => root.controller.referenceMode = i
+            }
+            GridLayout {
+                columns: 4
+                visible: !root.controller.dataIsAbsorbance && root.controller.referenceChoice > 0
+                         && root.controller.referenceMode === 1
+                Layout.fillWidth: true
+                Label { text: qsTr("scans") }
+                SpinBox {
+                    from: 1; to: Math.max(1, root.controller.referenceScanCount)
+                    value: root.controller.refFirst + 1
+                    editable: true
+                    onValueModified: root.controller.refFirst = value - 1
+                    Layout.fillWidth: true
+                }
+                Label { text: "–" }
+                SpinBox {
+                    from: 1; to: Math.max(1, root.controller.referenceScanCount)
+                    value: root.controller.refLast < 0 ? root.controller.referenceScanCount : root.controller.refLast + 1
+                    editable: true
+                    onValueModified: root.controller.refLast = (value >= root.controller.referenceScanCount ? -1 : value - 1)
+                    Layout.fillWidth: true
+                }
+            }
+            CheckBox {
+                visible: root.controller.hasDarkCurrent
+                text: qsTr("Dark current subtracted")
+                checked: root.controller.darkSubtracted
+                onToggled: root.controller.darkSubtracted = checked
+            }
+        }
+    }
+
+    GroupBox {
+        title: qsTr("Scans")
+        Layout.fillWidth: true
         enabled: root.hasData
         GridLayout {
             anchors.fill: parent
@@ -118,14 +273,6 @@ ColumnLayout {
                 fileName: root.controller.riNoiseName
                 applied: root.controller.applyRiNoise
                 onAppliedToggled: (on) => root.controller.applyRiNoise = on
-            }
-            Label {
-                visible: root.controller.noiseError !== ""
-                text: root.controller.noiseError
-                color: "#c0262d"
-                wrapMode: Text.Wrap
-                font.pixelSize: 11
-                Layout.fillWidth: true
             }
         }
     }

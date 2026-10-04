@@ -38,7 +38,7 @@ public:
     static IoResult write(const QString& path, const Dataset& data);
     static QByteArray toBytes(const Dataset& data);
 
-    /// Reads only the header (type, cell, channel, description, scan count) – fast, for file lists.
+    /// Reads only the file header and the first scan header (no readings) – fast, for file lists.
     struct Header {
         DataType type = DataType::RadialAbsorbance;
         int cell = 0;
@@ -47,6 +47,11 @@ public:
         int scanCount = 0;
         int version = 0;
         std::array<std::uint8_t, 16> guid{};
+        // From the first scan header:
+        double wavelength = 0.0;  ///< nm
+        double rMin = 0.0;        ///< cm
+        double deltaR = 0.0;      ///< cm
+        int points = 0;
     };
     static IoResult readHeader(const QString& path, Header& out);
 };

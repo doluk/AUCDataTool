@@ -150,10 +150,24 @@ IoResult AucFile::readHeader(const QString& path, Header& out)
 {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return fail(IoResult::CannotOpen, f.errorString());
-    const QByteArray head = f.read(kHeaderBytes);
+    const QByteArray head = f.read(kHeaderBytes + kScanHeaderBytes);
     Reader r(head);
     float ranges[7];
-    return parseHeader(r, out, ranges);
+    Header h;
+    if (IoResult res = parseHeader(r, h, ranges); !res.ok()) return res;
+    h.rMin = ranges[0];
+    h.deltaR = ranges[2];
+    char tag[4];
+    float temp, rpm, w2t, dr;
+    qint32 seconds, count;
+    quint16 wl;
+    if (r.take(tag, 4) && std::memcmp(tag, "DATA", 4) == 0 && r.f32(temp) && r.f32(rpm) && r.le(seconds) && r.f32(w2t)
+        && r.le(wl) && r.f32(dr) && r.le(count)) {
+        h.wavelength = h.version > 4 ? wl / 10.0 : wl / 100.0 + 180.0;
+        h.points = count;
+    }
+    out = std::move(h);
+    return {};
 }
 
 IoResult AucFile::read(const QString& path, Dataset& out)

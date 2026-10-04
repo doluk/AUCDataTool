@@ -47,7 +47,7 @@ int main(int argc, char** argv)
 {
     QGuiApplication app(argc, argv);
     app.setOrganizationName(QStringLiteral("AG Coelfen"));
-    app.setApplicationName(QStringLiteral("AUC Viewer"));
+    app.setApplicationName(QStringLiteral("AUCDataTool"));
     app.setApplicationVersion(QStringLiteral(PROJECT_VERSION));
 
     QCommandLineParser parser;
@@ -64,7 +64,9 @@ int main(int argc, char** argv)
                                     QStringLiteral("key=value"));
     const QCommandLineOption tiOpt(QStringLiteral("ti-noise"), QStringLiteral("TI noise file for the first data file."), QStringLiteral("file"));
     const QCommandLineOption riOpt(QStringLiteral("ri-noise"), QStringLiteral("RI noise file for the first data file."), QStringLiteral("file"));
-    parser.addOptions({shotOpt, benchOpt, sizeOpt, setOpt, tiOpt, riOpt});
+    const QCommandLineOption watchOpt(QStringLiteral("watch"), QStringLiteral("Open a folder and follow new scans (live mode)."), QStringLiteral("folder"));
+    const QCommandLineOption delayOpt(QStringLiteral("screenshot-delay"), QStringLiteral("Delay before --screenshot (ms, default 2500)."), QStringLiteral("ms"), QStringLiteral("2500"));
+    parser.addOptions({shotOpt, benchOpt, sizeOpt, setOpt, tiOpt, riOpt, watchOpt, delayOpt});
     parser.process(app);
 
 #ifdef Q_OS_ANDROID
@@ -80,9 +82,9 @@ int main(int argc, char** argv)
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
-    engine.loadFromModule("Auc.Viewer", "Main");
+    engine.loadFromModule("Auc.DataTool", "Main");
 #else
-    engine.load(QUrl(QStringLiteral("qrc:/Auc/Viewer/qml/Main.qml")));
+    engine.load(QUrl(QStringLiteral("qrc:/Auc/DataTool/qml/Main.qml")));
 #endif
     if (engine.rootObjects().isEmpty()) return 1;
 
@@ -90,6 +92,7 @@ int main(int argc, char** argv)
     auto* controller = window->property("controller").value<AppController*>();
     if (controller) {
         controller->openPaths(parser.positionalArguments());
+        if (parser.isSet(watchOpt)) controller->openFolder(QUrl::fromLocalFile(parser.value(watchOpt)), true);
         if (parser.isSet(tiOpt)) controller->loadNoise(QUrl::fromLocalFile(parser.value(tiOpt)), true);
         if (parser.isSet(riOpt)) controller->loadNoise(QUrl::fromLocalFile(parser.value(riOpt)), false);
         for (const QString& kv : parser.values(setOpt)) {
@@ -138,7 +141,7 @@ int main(int argc, char** argv)
 
     if (parser.isSet(shotOpt)) {
         const QString out = parser.value(shotOpt);
-        QTimer::singleShot(2500, window, [window, out]() {
+        QTimer::singleShot(parser.value(delayOpt).toInt(), window, [window, out]() {
             const QImage img = window->grabWindow();
             std::printf("screenshot %s: %s\n", qPrintable(out), img.save(out) ? "ok" : "FAILED");
             QCoreApplication::quit();

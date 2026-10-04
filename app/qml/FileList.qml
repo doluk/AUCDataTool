@@ -14,7 +14,7 @@ Pane {
         spacing: 0
 
         Label {
-            text: qsTr("Data files (%1)").arg(root.controller.files.length)
+            text: qsTr("Channels (%1)").arg(root.controller.channels.length)
             font.bold: true
             padding: 8
             Layout.fillWidth: true
@@ -25,7 +25,7 @@ Pane {
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            model: root.controller.files
+            model: root.controller.channels
             currentIndex: root.controller.currentIndex
             ScrollBar.vertical: ScrollBar {}
 
@@ -38,19 +38,24 @@ Pane {
                 onClicked: root.controller.currentIndex = index
                 contentItem: ColumnLayout {
                     spacing: 1
-                    Label {
-                        text: d.modelData.name
-                        elide: Text.ElideMiddle
+                    RowLayout {
                         Layout.fillWidth: true
-                        font.bold: d.highlighted
+                        Label {
+                            text: d.modelData.title
+                            font.bold: d.highlighted
+                        }
+                        Label {
+                            text: d.modelData.run
+                            opacity: 0.55
+                            font.pixelSize: 11
+                            elide: Text.ElideLeft
+                            horizontalAlignment: Text.AlignRight
+                            Layout.fillWidth: true
+                        }
                     }
                     Label {
-                        text: d.modelData.error
-                              ? qsTr("⚠ %1").arg(d.modelData.error)
-                              : qsTr("%1 · %2 · %3 scans").arg(d.modelData.type || "?")
-                                    .arg(d.modelData.triple || "").arg(d.modelData.scans || 0)
-                        color: d.modelData.error ? "#c0262d" : palette.text
-                        opacity: d.modelData.error ? 1 : 0.65
+                        text: d.modelData.subtitle
+                        opacity: 0.65
                         font.pixelSize: 11
                         elide: Text.ElideRight
                         Layout.fillWidth: true
@@ -61,7 +66,7 @@ Pane {
             Label {
                 anchors.centerIn: parent
                 visible: list.count === 0
-                text: qsTr("No files")
+                text: qsTr("No data")
                 opacity: 0.5
             }
         }
@@ -69,7 +74,7 @@ Pane {
         Button {
             text: qsTr("Close all")
             flat: true
-            enabled: root.controller.files.length > 0
+            enabled: root.controller.channels.length > 0
             onClicked: root.controller.closeAll()
             Layout.fillWidth: true
         }

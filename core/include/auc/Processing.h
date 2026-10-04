@@ -48,6 +48,16 @@ std::vector<float> meanScan(const Dataset& d, std::span<const std::size_t> scanI
 /// (e.g. meanScan of the reference channel or of reference scans).
 Dataset toAbsorbance(const Dataset& intensity, std::span<const float> reference, const AbsorbanceParams& p = {});
 
+/// [AUC-Viewer: cal abs, "reference channel"] Sample scan i against reference scan i. The
+/// result has min(sample, reference) scans. Returns an empty string on success, else why
+/// the two datasets cannot be paired (radius grids differ).
+std::string absorbanceScanByScan(Dataset& sample, const Dataset& reference, const AbsorbanceParams& p = {});
+
+/// [AUC-Viewer: cal abs with "reference scans"] Every sample scan against the mean of
+/// reference scans [first, last] (inclusive, clamped; last = SIZE_MAX for all).
+std::string absorbanceMeanReference(Dataset& sample, const Dataset& reference, std::size_t first, std::size_t last,
+                                    const AbsorbanceParams& p = {});
+
 // ---------------------------------------------------------------------------------------
 // Corrections
 // ---------------------------------------------------------------------------------------

@@ -6,3 +6,6 @@ target_link_libraries(aucinfo PRIVATE Auc::Core)
 
 add_executable(aucgen aucgen.cpp)
 target_link_libraries(aucgen PRIVATE Auc::Core)
+
+add_executable(mwlgen mwlgen.cpp)
+target_link_libraries(mwlgen PRIVATE Auc::Core)

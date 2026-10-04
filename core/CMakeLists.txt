@@ -7,6 +7,8 @@ add_library(auccore STATIC
     include/auc/Processing.h
     include/auc/Noise.h
     include/auc/FolderWatcher.h
+    include/auc/Channel.h
+    include/auc/MwlFormat.h
     src/Crc32.h
     src/Crc32.cpp
     src/Dataset.cpp
@@ -14,6 +16,8 @@ add_library(auccore STATIC
     src/Processing.cpp
     src/Noise.cpp
     src/FolderWatcher.cpp
+    src/Channel.cpp
+    src/MwlFormat.cpp
 )
 add_library(Auc::Core ALIAS auccore)
 

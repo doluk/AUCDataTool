@@ -4,15 +4,16 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
-import Auc.Viewer
+import Auc.DataTool
 
 ApplicationWindow {
     id: win
     width: 1400
     height: 860
     visible: true
-    title: ctrl.currentIndex >= 0 && ctrl.files.length > ctrl.currentIndex
-           ? ctrl.files[ctrl.currentIndex].name + " – AUC Viewer" : "AUC Viewer"
+    title: ctrl.currentIndex >= 0 && ctrl.channels.length > ctrl.currentIndex
+           ? ctrl.channels[ctrl.currentIndex].run + " · " + ctrl.channels[ctrl.currentIndex].title + " – AUCDataTool"
+           : "AUCDataTool"
 
     // Exposed for main.cpp (command-line files, benchmark).
     property alias controller: ctrl
@@ -30,7 +31,8 @@ ApplicationWindow {
         id: fileDialog
         title: qsTr("Open data files")
         fileMode: FileDialog.OpenFiles
-        nameFilters: [qsTr("openAUC data (*.auc)"), qsTr("All files (*)")]
+        nameFilters: [qsTr("AUC data (*.auc *.mwrs *.mw)"), qsTr("openAUC (*.auc)"),
+                      qsTr("Multi-wavelength (*.mwrs *.mw)"), qsTr("All files (*)")]
         onAccepted: ctrl.openFiles(selectedFiles)
     }
     FolderDialog {
@@ -50,6 +52,8 @@ ApplicationWindow {
 
     Shortcut { sequences: [StandardKey.Open]; onActivated: fileDialog.open() }
     Shortcut { sequence: "F1"; onActivated: scanView.plot.autoscale() }  // same key as the LabVIEW viewer
+    Shortcut { sequences: ["Ctrl+Right", "PgUp"]; onActivated: ctrl.stepWavelength(1) }
+    Shortcut { sequences: ["Ctrl+Left", "PgDown"]; onActivated: ctrl.stepWavelength(-1) }
 
     header: ToolBar {
         RowLayout {
@@ -106,7 +110,8 @@ ApplicationWindow {
                 SplitView.minimumHeight: 200
                 xLabel: qsTr("Radius (cm)")
                 yLabel: ctrl.yLabel
-                placeholder: qsTr("Open .auc files or a data folder.\nWheel: zoom · Drag: pan · Right-drag: zoom box · Double-click/F1: autoscale")
+                placeholder: ctrl.processingError !== "" ? ctrl.processingError
+                             : qsTr("Open .auc/.mwrs/.mw files or a data folder.\nWheel: zoom · Drag: pan · Right-drag: zoom box · Double-click/F1: autoscale\nCtrl+←/→: previous/next wavelength")
                 markers: {
                     var m = []
                     if (ctrl.offsetMode === 1)

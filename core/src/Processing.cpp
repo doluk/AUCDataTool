@@ -75,6 +75,43 @@ Dataset toAbsorbance(const Dataset& intensity, std::span<const float> reference,
     return out;
 }
 
+std::string absorbanceScanByScan(Dataset& sample, const Dataset& reference, const AbsorbanceParams& p)
+{
+    if (reference.pointCount() != sample.pointCount())
+        return "reference has " + std::to_string(reference.pointCount()) + " radius points, sample "
+             + std::to_string(sample.pointCount());
+    const std::size_t n = std::min(sample.scans.size(), reference.scans.size());
+    sample.scans.resize(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        auto& s = sample.scans[i];
+        std::vector<float> a(s.values.size());
+        absorbance(s.values, reference.scans[i].values, a, p);
+        s.values = std::move(a);
+        s.stddev.clear();
+    }
+    sample.type = DataType::RadialAbsorbance;
+    return {};
+}
+
+std::string absorbanceMeanReference(Dataset& sample, const Dataset& reference, std::size_t first, std::size_t last,
+                                    const AbsorbanceParams& p)
+{
+    if (reference.pointCount() != sample.pointCount())
+        return "reference has " + std::to_string(reference.pointCount()) + " radius points, sample "
+             + std::to_string(sample.pointCount());
+    const auto sel = selectScans(reference.scanCount(), first, last, 1);
+    if (sel.empty()) return "the reference scan range is empty";
+    const std::vector<float> i0 = meanScan(reference, sel);
+    for (auto& s : sample.scans) {
+        std::vector<float> a(s.values.size());
+        absorbance(s.values, i0, a, p);
+        s.values = std::move(a);
+        s.stddev.clear();
+    }
+    sample.type = DataType::RadialAbsorbance;
+    return {};
+}
+
 void applyDarkCurrent(std::span<float> values, std::span<const float> dark, bool subtract)
 {
     const std::size_t n = std::min(values.size(), dark.size());

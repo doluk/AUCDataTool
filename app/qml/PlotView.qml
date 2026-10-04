@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import QtQuick
 import QtQuick.Controls
-import Auc.Viewer
+import Auc.DataTool
 
 // Axes, labels, interaction and draggable vertical markers around a ScanPlot.
 Item {
