@@ -40,6 +40,13 @@ ctest --test-dir build --output-on-failure
 
 Options: `-DAUC_BUILD_APP=OFF` builds only the core library, tools and tests (needs only Qt Core).
 
+### Installers
+
+`cpack --config build/CPackConfig.cmake -C Release -B build/package` bundles Qt and produces
+an NSIS installer (`.exe`, Windows), a disk image (`.dmg`, macOS) or a `.deb` (Linux, installs
+to `/opt/AUCDataTool`; Linux deployment needs Qt ≥ 6.5). CI builds these for every push as
+workflow artifacts and attaches them to a GitHub release when a `v*` tag is pushed.
+
 ### Tools
 
 - `aucinfo PATH… [--bench]` — summary of every channel in files/folders (`.auc`, `.mwrs`,

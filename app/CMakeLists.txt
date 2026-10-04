@@ -43,3 +43,12 @@ install(TARGETS aucdatatool
     BUNDLE DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+# Bundle Qt libraries, plugins and QML imports next to the executable at install time
+# (windeployqt / macdeployqt / Qt's own Linux deployment, the latter needs Qt >= 6.5).
+qt_generate_deploy_qml_app_script(
+    TARGET aucdatatool
+    OUTPUT_SCRIPT deploy_script
+    NO_UNSUPPORTED_PLATFORM_ERROR
+)
+install(SCRIPT ${deploy_script})
