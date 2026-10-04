@@ -66,3 +66,13 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Build directories and IDE files
+build/
+build-*/
+CMakeLists.txt.user*
+.qtcreator/
+.vscode/
+.idea/
+*.autosave
+compile_commands.json
