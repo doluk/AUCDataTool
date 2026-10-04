@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "aucdatatool",
+  "version": "0.1.0",
+  "description": "Viewer for analytical ultracentrifugation raw data",
+  "homepage": "https://github.com/doluk/AUCDataTool",
+  "license": "LGPL-3.0-or-later",
+  "dependencies": [
+    {
+      "name": "qtbase",
+      "features": ["concurrent", "gui", "testlib"]
+    },
+    "qtdeclarative"
+  ]
+}

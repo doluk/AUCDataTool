@@ -38,6 +38,9 @@ ctest --test-dir build --output-on-failure
 ./build/app/AUCDataTool path/to/run/         # files or folders
 ```
 
+With [vcpkg](https://vcpkg.io), Qt is taken from the `vcpkg.json` manifest:
+`cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake`.
+
 Options: `-DAUC_BUILD_APP=OFF` builds only the core library, tools and tests (needs only Qt Core).
 
 ### Installers

@@ -47,11 +47,15 @@ Item {
         clip: true
         z: 1
         // Markers (drawn above the curves, clipped with the plot)
+        // The model is the marker count, not the array: `markers` is rebuilt on every value
+        // change, and an array model would recreate the delegate under the cursor and end
+        // the drag after a single mouse move.
         Repeater {
-            model: root.markers
+            model: root.markers.length
             delegate: Item {
                 id: marker
-                required property var modelData
+                required property int index
+                readonly property var modelData: root.markers[index] ?? { value: 0, color: "transparent", label: "", key: "" }
                 property real px: { plot.viewRect; plot.width; return plot.toPixelX(modelData.value) }
                 x: px - 6
                 y: 0
