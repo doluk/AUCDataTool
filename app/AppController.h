@@ -5,6 +5,7 @@
 #include "Colormap.h"
 #include "PlotSeries.h"
 #include "ScanPlot.h"
+#include "SurfaceGrid.h"
 
 #include "auc/Channel.h"
 #include "auc/Dataset.h"
@@ -59,7 +60,19 @@ struct ProcessingOptions {
     bool radialWeight = false;
     Colormap::Kind colormap = Colormap::Viridis;
     bool applyTi = true, applyRi = true;
+    bool spectrum = false;          ///< also compute spectra at a radius
+    double specR = 0.0;             ///< cm
+    double specWidth = 0.0;         ///< half-width of the averaged radius window, cm
 };
+
+/// What the 3D surface shows.
+enum class SurfaceMode {
+    RadiusTime = 0,        ///< current wavelength: radius × time, one row per selected scan
+    RadiusWavelength = 1,  ///< one scan: radius × wavelength (multi-wavelength data)
+};
+
+/// Formats of exportData().
+enum class ExportFormat { Csv = 0, Origin = 1, Beckman = 2, UltraScan = 3 };
 
 /// Owns the opened channels, runs processing off the GUI thread and feeds the plots.
 class AppController : public QObject {
@@ -75,6 +88,13 @@ class AppController : public QObject {
 
     Q_PROPERTY(ScanPlot* scanPlot READ scanPlot WRITE setScanPlot NOTIFY scanPlotChanged)
     Q_PROPERTY(ScanPlot* integralPlot READ integralPlot WRITE setIntegralPlot NOTIFY integralPlotChanged)
+    Q_PROPERTY(ScanPlot* spectrumPlot READ spectrumPlot WRITE setSpectrumPlot NOTIFY spectrumPlotChanged)
+    // Run conditions of the current channel against time (one point per scan)
+    Q_PROPERTY(ScanPlot* speedPlot READ speedPlot WRITE setSpeedPlot NOTIFY runPlotsChanged)
+    Q_PROPERTY(ScanPlot* temperaturePlot READ temperaturePlot WRITE setTemperaturePlot NOTIFY runPlotsChanged)
+    Q_PROPERTY(ScanPlot* omega2tPlot READ omega2tPlot WRITE setOmega2tPlot NOTIFY runPlotsChanged)
+    /// Ranges of speed and temperature and the ω²t fit, as text.
+    Q_PROPERTY(QString runConditions READ runConditions NOTIFY runConditionsChanged)
 
     // Current channel
     Q_PROPERTY(int scanCount READ scanCount NOTIFY datasetChanged)
@@ -82,6 +102,9 @@ class AppController : public QObject {
     Q_PROPERTY(double radiusMax READ radiusMax NOTIFY datasetChanged)
     Q_PROPERTY(QString runInfo READ runInfo NOTIFY viewChanged)
     Q_PROPERTY(QString yLabel READ yLabel NOTIFY viewChanged)
+    Q_PROPERTY(QString xLabel READ xLabel NOTIFY datasetChanged)
+    /// The channel has several wavelengths, so spectra and the radius × λ surface exist.
+    Q_PROPERTY(bool hasSpectra READ hasSpectra NOTIFY datasetChanged)
     Q_PROPERTY(bool dataIsAbsorbance READ dataIsAbsorbance NOTIFY datasetChanged)
     Q_PROPERTY(bool hasDarkCurrent READ hasDarkCurrent NOTIFY datasetChanged)
 
@@ -122,6 +145,23 @@ class AppController : public QObject {
     Q_PROPERTY(int colormap MEMBER m_optColormap NOTIFY optionsChanged)
     Q_PROPERTY(bool applyTiNoise MEMBER m_optApplyTi NOTIFY optionsChanged)
     Q_PROPERTY(bool applyRiNoise MEMBER m_optApplyRi NOTIFY optionsChanged)
+    Q_PROPERTY(bool showSpectrum MEMBER m_optSpectrum NOTIFY optionsChanged)
+    Q_PROPERTY(double spectrumRadius MEMBER m_optSpecR NOTIFY optionsChanged)
+    Q_PROPERTY(double spectrumWidth MEMBER m_optSpecWidth NOTIFY optionsChanged)
+
+    // 3D surface (computed only while shown)
+    Q_PROPERTY(bool surfaceSupported READ surfaceSupported CONSTANT)
+    Q_PROPERTY(bool surfaceActive READ surfaceActive WRITE setSurfaceActive NOTIFY surfaceSettingsChanged)
+    Q_PROPERTY(int surfaceMode READ surfaceMode WRITE setSurfaceMode NOTIFY surfaceSettingsChanged)
+    /// Scan index for the radius × λ surface, −1 = last scan.
+    Q_PROPERTY(int surfaceScan READ surfaceScan WRITE setSurfaceScan NOTIFY surfaceSettingsChanged)
+    /// Radius × time surface: time axis as ω²t instead of minutes.
+    Q_PROPERTY(bool surfaceOmega2t READ surfaceOmega2t WRITE setSurfaceOmega2t NOTIFY surfaceSettingsChanged)
+    Q_PROPERTY(QString surfaceTitle READ surfaceTitle NOTIFY surfaceChanged)
+
+    // Export / print
+    Q_PROPERTY(bool exporting READ exporting NOTIFY exportingChanged)
+    Q_PROPERTY(bool canPrint READ canPrint CONSTANT)
 
     // Noise files of the current channel
     Q_PROPERTY(QString tiNoiseName READ tiNoiseName NOTIFY noiseChanged)
@@ -143,12 +183,23 @@ public:
     void setScanPlot(ScanPlot* p);
     ScanPlot* integralPlot() const { return m_integralPlot; }
     void setIntegralPlot(ScanPlot* p);
+    ScanPlot* spectrumPlot() const { return m_spectrumPlot; }
+    void setSpectrumPlot(ScanPlot* p);
+    ScanPlot* speedPlot() const { return m_speedPlot; }
+    void setSpeedPlot(ScanPlot* p);
+    ScanPlot* temperaturePlot() const { return m_temperaturePlot; }
+    void setTemperaturePlot(ScanPlot* p);
+    ScanPlot* omega2tPlot() const { return m_omega2tPlot; }
+    void setOmega2tPlot(ScanPlot* p);
+    QString runConditions() const { return m_runConditions; }
 
     int scanCount() const;
     double radiusMin() const;
     double radiusMax() const;
     QString runInfo() const;
     QString yLabel() const;
+    QString xLabel() const;
+    bool hasSpectra() const;
     bool dataIsAbsorbance() const;
     bool hasDarkCurrent() const;
 
@@ -184,14 +235,41 @@ public:
     QString tiNoiseName() const;
     QString riNoiseName() const;
 
+    static bool surfaceSupported();
+    bool surfaceActive() const { return m_surfaceActive; }
+    void setSurfaceActive(bool on);
+    int surfaceMode() const { return int(m_surfaceMode); }
+    void setSurfaceMode(int m);
+    int surfaceScan() const { return m_surfaceScan; }
+    void setSurfaceScan(int s);
+    bool surfaceOmega2t() const { return m_surfaceOmega2t; }
+    void setSurfaceOmega2t(bool on);
+    QString surfaceTitle() const { return m_surface ? m_surface->title : QString(); }
+    /// Latest surface data (null if the surface is not shown or not available).
+    SurfaceGridPtr surfaceGrid() const { return m_surface; }
+
+    bool exporting() const { return m_export.isRunning(); }
+    static bool canPrint();
+
     Q_INVOKABLE void openFiles(const QList<QUrl>& urls);
     Q_INVOKABLE void openFolder(const QUrl& url, bool watchLive);
     Q_INVOKABLE void stopLive();
     Q_INVOKABLE void closeAll();
     Q_INVOKABLE bool exportCsv(const QUrl& url);
+    /// Exports the processed data (all current processing options) as `format`
+    /// (ExportFormat) to a file (CSV, Origin) or folder (Beckman, UltraScan). With
+    /// `allWavelengths`, every `step`-th wavelength in [fromNm, toNm] is processed and
+    /// written; otherwise the current wavelength (or MWA range). Runs in the background.
+    Q_INVOKABLE void exportData(int format, const QUrl& target, bool allWavelengths, double fromNm, double toNm, int step);
+    /// Prints an image (a grabbed plot) with the run information as caption.
+    Q_INVOKABLE void printImage(const QVariant& image, const QString& caption);
+    /// Saves an image as PNG/JPEG, or PDF (vector page with caption) by the file suffix.
+    Q_INVOKABLE bool saveImage(const QVariant& image, const QUrl& url, const QString& caption);
     Q_INVOKABLE bool loadNoise(const QUrl& url, bool ti);
     Q_INVOKABLE void clearNoise(bool ti);
     Q_INVOKABLE void stepWavelength(int delta);
+    /// Index of the current channel's wavelength nearest to `nm`.
+    Q_INVOKABLE int wavelengthIndexOf(double nm) const;
     /// Opens files/folders given as plain paths (command line).
     void openPaths(const QStringList& paths);
 
@@ -203,6 +281,13 @@ signals:
     void liveChanged();
     void scanPlotChanged();
     void integralPlotChanged();
+    void spectrumPlotChanged();
+    void runPlotsChanged();
+    void runConditionsChanged();
+    void surfaceSettingsChanged();
+    void surfaceChanged();
+    void exportingChanged();
+    void exportFinished(bool ok, const QString& message);
     void datasetChanged();
     void viewChanged();
     void optionsChanged();
@@ -226,11 +311,20 @@ private:
         std::optional<auc::noise::NoiseVector> ti, ri;
         quint64 generation = 0;
         bool keepView = false;
+        bool surface = false;
+        SurfaceMode surfaceMode = SurfaceMode::RadiusTime;
+        bool surfaceOmega2t = false;
+        int surfaceScan = -1;
+        bool plots = true;  ///< false: only the processed dataset (export)
+        QString yLabel;     ///< value axis title (surface)
     };
     struct Result {
         quint64 generation = 0;
-        PlotSeriesPtr scans, integral;
+        PlotSeriesPtr scans, integral, spectrum;
+        SurfaceGridPtr surface;
+        QString surfaceError;
         std::shared_ptr<const auc::Dataset> processed;
+        std::vector<int> scanIds;  ///< source scan index of each processed scan
         double ms = 0.0;
         bool keepView = false;
         QString error;      ///< processing could not run (nothing shown)
@@ -240,6 +334,11 @@ private:
     void addChannels(const auc::OpenResult& res, bool selectFirstNew);
     void initSettings(int index);
     void reprocess(bool keepView);
+    void updateRunPlots();
+    Job makeJob(const Entry& e) const;
+    static void computeSpectrum(const Job& job, const std::vector<std::size_t>& selected, Result& res, QStringList& warnings);
+    static SurfaceGridPtr computeSurface(const Job& job, const auc::Dataset& processed, QString& error);
+    QString spectrumKey() const;
     void onProcessed();
     void liveUpdate();
     void setStatus(const QString& s);
@@ -260,11 +359,21 @@ private:
     bool m_pending = false;
     bool m_pendingKeepView = true;
     QFutureWatcher<Result> m_future;
+    QFutureWatcher<QString> m_export;
     std::shared_ptr<const auc::Dataset> m_processed;
     auc::FolderWatcher m_watcher;
     QTimer m_liveTimer;
     QPointer<ScanPlot> m_scanPlot;
     QPointer<ScanPlot> m_integralPlot;
+    QPointer<ScanPlot> m_spectrumPlot;
+    QPointer<ScanPlot> m_speedPlot, m_temperaturePlot, m_omega2tPlot;
+    QString m_runConditions;
+    QString m_lastSpectrumKey;
+    SurfaceGridPtr m_surface;
+    bool m_surfaceActive = false;
+    SurfaceMode m_surfaceMode = SurfaceMode::RadiusTime;
+    bool m_surfaceOmega2t = false;
+    int m_surfaceScan = -1;
 
     bool m_optReverse = false;
     bool m_optSpikes = false;
@@ -277,4 +386,7 @@ private:
     int m_optColormap = Colormap::Viridis;
     bool m_optApplyTi = true;
     bool m_optApplyRi = true;
+    bool m_optSpectrum = false;
+    double m_optSpecR = 0.0;
+    double m_optSpecWidth = 0.005;
 };

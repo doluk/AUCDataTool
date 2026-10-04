@@ -198,6 +198,23 @@ private slots:
         QVERIFY(near(d.radius.front(), 6.02));
         QVERIFY(near(d.scans[0].values.front(), 0.2, 1e-6));
     }
+
+    void omega2tFit()
+    {
+        // 50 000 rpm from t0 = 120 s; the first scan is still accelerating (excluded).
+        const double w = 50000.0 * 2.0 * std::numbers::pi / 60.0;
+        std::vector<double> t{60, 300, 600, 900, 1200}, rpm{30000, 50000, 50010, 49990, 50000}, w2t;
+        for (double s : t) w2t.push_back(w * w * (s - 120.0));
+        w2t[0] = 1e8;
+        const auto f = auc::proc::fitOmega2t(t, w2t, rpm);
+        QVERIFY(f.valid);
+        QCOMPARE(f.used, std::size_t(4));
+        QVERIFY(std::abs(f.rpm - 50000.0) < 0.01);
+        QVERIFY(std::abs(f.t0 - 120.0) < 1e-6);
+        QVERIFY(f.rms < 1e-12);
+        QVERIFY(!auc::proc::fitOmega2t(std::vector<double>{1.0}, std::vector<double>{1.0}, std::vector<double>{1.0}).valid);
+    }
+
 };
 
 QTEST_GUILESS_MAIN(TestProcessing)

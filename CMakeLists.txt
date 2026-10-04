@@ -3,6 +3,18 @@
 
 cmake_minimum_required(VERSION 3.21)
 
+# vcpkg: with VCPKG_ROOT set (or the toolchain passed explicitly), configuring installs the
+# dependencies listed in vcpkg.json into the build tree (manifest mode). Both must be set
+# before project(). Pass -DVCPKG_MANIFEST_MODE=OFF to use classic-mode packages instead.
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT}
+   AND EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+    set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg toolchain")
+endif()
+if(CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg.cmake$")
+    set(VCPKG_MANIFEST_MODE ON CACHE BOOL "Install dependencies from vcpkg.json")
+    set(VCPKG_MANIFEST_INSTALL ON CACHE BOOL "Run vcpkg install when configuring")
+endif()
+
 project(AUCDataTool
     VERSION 0.1.0
     DESCRIPTION "Viewer for analytical ultracentrifugation raw data"

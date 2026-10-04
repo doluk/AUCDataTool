@@ -18,11 +18,11 @@
 /// sub_fileIO_read_xml_file) and cross-checked with UltraScan III (US_MwlData).
 ///
 /// .mwrs, one file per cell/channel/scan, version from the run's *.mwrs.xml:
-///   v1.1–1.4 (26 bytes): cell u8 | channel char | scan u16 | rotor speed u16 |
-///     set speed u16 | T u16 (°C·10) | ω²t f32 | time u32 (s) | points u16 |
+///   v1.1–1.4 (26 bytes): cell u8 | channel char | scan u16 | set speed u16 |
+///     rotor speed u16 | T u16 (°C·10) | ω²t f32 | time u32 (s) | points u16 |
 ///     r_start u16 (cm·1000) | r_step u16 (cm·10000) | nλ u16 | λ u16[nλ] (nm) |
 ///     readings i32[nλ][points]
-///   v1.0: no set speed. LabVIEW reads nλ as i32 and λ as u32 (nm·10); UltraScan reads
+///   v1.0: rotor speed only (no set speed). LabVIEW reads nλ as i32 and λ as u32 (nm·10); UltraScan reads
 ///     nλ u16 and λ u16 (nm). The reader accepts whichever layout matches the file size.
 ///   Scaling: v1.0–1.2 ÷1000, v1.3 ×1, v1.4 ÷10000 for absorbance runs
 ///   (take_intensity="N"), ×1 for intensity runs.

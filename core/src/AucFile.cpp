@@ -345,6 +345,7 @@ IoResult AucFile::write(const QString& path, const Dataset& data)
         return fail(IoResult::WriteFailed, QStringLiteral("too many scans for the format"));
 
     QSaveFile f(path);
+    f.setDirectWriteFallback(true);  // e.g. Android content:// URIs: no temporary file next to the target
     if (!f.open(QIODevice::WriteOnly)) return fail(IoResult::CannotOpen, f.errorString());
     const QByteArray bytes = toBytes(data);
     if (f.write(bytes) != bytes.size() || !f.commit()) return fail(IoResult::WriteFailed, f.errorString());

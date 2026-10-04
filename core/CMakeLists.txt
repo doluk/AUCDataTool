@@ -18,6 +18,10 @@ add_library(auccore STATIC
     src/FolderWatcher.cpp
     src/Channel.cpp
     src/MwlFormat.cpp
+    include/auc/XlFormat.h
+    src/XlFormat.cpp
+    include/auc/Export.h
+    src/Export.cpp
 )
 add_library(Auc::Core ALIAS auccore)
 

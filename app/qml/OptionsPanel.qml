@@ -171,6 +171,34 @@ ColumnLayout {
                     onCommitted: (v) => root.controller.mwaTo = v
                 }
             }
+            CheckBox {
+                text: qsTr("Show spectra at a radius")
+                checked: root.controller.showSpectrum
+                onToggled: root.controller.showSpectrum = checked
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("All selected scans against wavelength at the green marker (drag it in the scan plot). Reads every scan file completely.")
+            }
+            GridLayout {
+                columns: 4
+                visible: root.controller.showSpectrum
+                Layout.fillWidth: true
+                Label { text: qsTr("r (cm)") }
+                NumberField {
+                    Layout.fillWidth: true
+                    decimals: 3
+                    value: root.controller.spectrumRadius
+                    onCommitted: (v) => root.controller.spectrumRadius = v
+                }
+                Label { text: "±" }
+                NumberField {
+                    Layout.fillWidth: true
+                    decimals: 3
+                    value: root.controller.spectrumWidth
+                    onCommitted: (v) => root.controller.spectrumWidth = Math.max(0, v)
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Half-width of the radius window averaged for the spectra (cm)")
+                }
+            }
         }
     }
 
@@ -183,7 +211,8 @@ ColumnLayout {
             anchors.fill: parent
             Label {
                 visible: root.controller.dataIsAbsorbance
-                text: qsTr("The file contains absorbance.")
+                text: root.controller.yLabel.startsWith("Absorbance") ? qsTr("The file contains absorbance.")
+                      : qsTr("The file contains %1.").arg(root.controller.yLabel)
                 opacity: 0.7
             }
             RowLayout {
