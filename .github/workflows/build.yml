@@ -14,11 +14,14 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            installer: '*.deb'
+            installer: |
+              build/package/*.deb
+              build/package/*.rpm
+              build/package/*.tar.gz
           - os: windows-2022
-            installer: '*.exe'
+            installer: build/package/*.exe
           - os: macos-14
-            installer: '*.dmg'
+            installer: build/package/*.dmg
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +43,10 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: ctest --test-dir build -C Release --output-on-failure
 
+      - name: Install rpmbuild
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
       - name: Package
         run: cpack --config build/CPackConfig.cmake -C Release -B build/package
 
@@ -47,13 +54,37 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AUCDataTool-${{ runner.os }}
-          path: build/package/${{ matrix.installer }}
+          path: ${{ matrix.installer }}
+          if-no-files-found: error
+
+  arch:
+    # Native Arch Linux package against system Qt (packaging/arch/PKGBUILD).
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm --needed cmake ninja qt6-base qt6-declarative
+
+      - uses: actions/checkout@v4
+
+      - name: Build package
+        run: |
+          useradd -m builder
+          chown -R builder: .
+          cd packaging/arch
+          sudo -u builder makepkg --noconfirm
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: AUCDataTool-Arch
+          path: packaging/arch/*.pkg.tar.zst
           if-no-files-found: error
 
   release:
     # Attach the installers to a GitHub release when a version tag (v*) is pushed.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, arch]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

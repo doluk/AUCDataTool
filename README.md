@@ -43,8 +43,10 @@ Options: `-DAUC_BUILD_APP=OFF` builds only the core library, tools and tests (ne
 ### Installers
 
 `cpack --config build/CPackConfig.cmake -C Release -B build/package` bundles Qt and produces
-an NSIS installer (`.exe`, Windows), a disk image (`.dmg`, macOS) or a `.deb` (Linux, installs
-to `/opt/AUCDataTool`; Linux deployment needs Qt ≥ 6.5). CI builds these for every push as
+an NSIS installer (`.exe`, Windows), a disk image (`.dmg`, macOS) or `.deb`, `.rpm` (both install
+to `/opt/AUCDataTool`) and a relocatable `.tar.gz` (Linux; Linux deployment needs Qt ≥ 6.5).
+An Arch Linux package built against system Qt comes from `cd packaging/arch && makepkg -s`.
+CI builds all of these for every push as
 workflow artifacts and attaches them to a GitHub release when a `v*` tag is pushed.
 
 ### Tools

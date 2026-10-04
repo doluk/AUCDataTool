@@ -46,9 +46,13 @@ install(TARGETS aucdatatool
 
 # Bundle Qt libraries, plugins and QML imports next to the executable at install time
 # (windeployqt / macdeployqt / Qt's own Linux deployment, the latter needs Qt >= 6.5).
-qt_generate_deploy_qml_app_script(
-    TARGET aucdatatool
-    OUTPUT_SCRIPT deploy_script
-    NO_UNSUPPORTED_PLATFORM_ERROR
-)
-install(SCRIPT ${deploy_script})
+# Distribution packages that depend on system Qt set AUC_DEPLOY_QT=OFF.
+option(AUC_DEPLOY_QT "Bundle the Qt runtime on install" ON)
+if(AUC_DEPLOY_QT)
+    qt_generate_deploy_qml_app_script(
+        TARGET aucdatatool
+        OUTPUT_SCRIPT deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+    install(SCRIPT ${deploy_script})
+endif()
