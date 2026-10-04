@@ -20,6 +20,7 @@ qt_add_qml_module(aucdatatool
         AppController.h AppController.cpp
         ScanPlot.h ScanPlot.cpp
         PlotSeries.h
+        CurveStyle.h
         Colormap.h Colormap.cpp
 )
 
@@ -49,9 +50,15 @@ install(TARGETS aucdatatool
 # Distribution packages that depend on system Qt set AUC_DEPLOY_QT=OFF.
 option(AUC_DEPLOY_QT "Bundle the Qt runtime on install" ON)
 if(AUC_DEPLOY_QT)
+    # Qt 6.4 names the output argument FILENAME_VARIABLE (OUTPUT_SCRIPT since 6.5).
+    if(Qt6_VERSION VERSION_LESS 6.5)
+        set(deploy_output FILENAME_VARIABLE)
+    else()
+        set(deploy_output OUTPUT_SCRIPT)
+    endif()
     qt_generate_deploy_qml_app_script(
         TARGET aucdatatool
-        OUTPUT_SCRIPT deploy_script
+        ${deploy_output} deploy_script
         NO_UNSUPPORTED_PLATFORM_ERROR
     )
     install(SCRIPT ${deploy_script})

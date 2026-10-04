@@ -15,6 +15,8 @@ Item {
     /// [{ value, color, label, key }] – vertical lines in data coordinates, draggable.
     property var markers: []
     signal markerMoved(string key, real value)
+    /// Left click selects the curve under the cursor (plot.selectedCurve).
+    property bool curvesSelectable: false
 
     readonly property int leftMargin: 66
     readonly property int bottomMargin: 46
@@ -207,6 +209,9 @@ Item {
             if (band.visible) {
                 band.visible = false
                 plot.zoomToPixelRect(start.x, start.y, e.x, e.y)
+            } else if (e.button === Qt.LeftButton && root.curvesSelectable
+                       && Math.abs(e.x - start.x) + Math.abs(e.y - start.y) < 4) {
+                plot.selectedCurve = plot.curveAt(e.x, e.y)  // click (not a pan)
             }
         }
         onDoubleClicked: plot.autoscale()

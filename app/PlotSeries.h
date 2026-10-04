@@ -3,6 +3,7 @@
 #pragma once
 
 #include <QColor>
+#include <QString>
 
 #include <memory>
 #include <vector>
@@ -13,6 +14,8 @@ struct PlotSeries {
     std::vector<float> x;                 ///< shared abscissa (e.g. radius)
     std::vector<std::vector<float>> y;    ///< one curve per entry, same length as x
     std::vector<QColor> colors;           ///< one per curve
+    std::vector<int> ids;                 ///< stable curve identity (scan index); empty = position
+    std::vector<QString> labels;          ///< display names; empty = "Curve n"
     double xMin = 0, xMax = 1, yMin = 0, yMax = 1;  ///< data bounds (finite values only)
 
     void computeBounds();

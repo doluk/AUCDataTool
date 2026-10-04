@@ -18,6 +18,7 @@ Targets Windows, macOS and Linux; the UI is Qt Quick so an Android build is poss
 | Intensity ↔ absorbance with a reference channel (scan by scan or mean of reference scans) | done |
 | Dark current (`.mw` v1.2): toggle subtracted/not subtracted | done |
 | GPU scan plot (all scans in one pass, zoom/pan without re-upload) | done |
+| Curve styles: colour, width, dash pattern, markers, visibility per scan (click to select) and for all scans | done |
 | Scan range / every n-th, reverse, spike filter, offset (point, baseline region) | done |
 | Radial integration (∫A dr, ∫A·r dr) + integral-vs-time plot | done |
 | TI/RI noise: load UltraScan noise XML or plain text | done |
