@@ -18,6 +18,39 @@
 
 namespace {
 
+/// File system path for a dialog URL. On Android the native dialogs return content:// URIs;
+/// documents on shared storage are mapped to their path (readable with "All files access"),
+/// so that sibling files (*.mwrs.xml, other scans of a run) can be found. Other content URIs
+/// are passed on unchanged – QFile opens them, but folder grouping is then not available.
+QString toPath(const QUrl& url)
+{
+    if (url.isLocalFile()) return url.toLocalFile();
+#ifdef Q_OS_ANDROID
+    if (url.scheme() == QLatin1String("content")) {
+        // .../document/<id>, .../tree/<id> or .../tree/<id>/document/<id>; the id is percent-encoded.
+        const QStringList seg = url.path(QUrl::FullyEncoded).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        QString id;
+        for (qsizetype i = 0; i + 1 < seg.size(); ++i)
+            if (seg[i] == QLatin1String("document") || seg[i] == QLatin1String("tree"))
+                id = QUrl::fromPercentEncoding(seg[i + 1].toUtf8());
+        QString path;
+        if (url.host() == QLatin1String("com.android.externalstorage.documents")) {
+            const QString volume = id.section(QLatin1Char(':'), 0, 0);
+            const QString rel = id.section(QLatin1Char(':'), 1);
+            if (volume == QLatin1String("primary")) path = QStringLiteral("/storage/emulated/0/") + rel;
+            else if (volume == QLatin1String("home")) path = QStringLiteral("/storage/emulated/0/Documents/") + rel;
+            else if (!volume.isEmpty()) path = QStringLiteral("/storage/%1/").arg(volume) + rel;
+        } else if (url.host() == QLatin1String("com.android.providers.downloads.documents")
+                   && id.startsWith(QLatin1String("raw:"))) {
+            path = id.mid(4);
+        }
+        if (!path.isEmpty() && QFileInfo(path).isReadable()) return QDir::cleanPath(path);
+        return url.toString();
+    }
+#endif
+    return url.toLocalFile();
+}
+
 double defaultWavelength(const auc::ChannelSource& c)
 {
     // 280 nm (protein) if measured, otherwise the middle of the range.
@@ -139,13 +172,13 @@ void AppController::openPaths(const QStringList& paths)
 void AppController::openFiles(const QList<QUrl>& urls)
 {
     QStringList paths;
-    for (const QUrl& u : urls) paths << u.toLocalFile();
+    for (const QUrl& u : urls) paths << toPath(u);
     openPaths(paths);
 }
 
 void AppController::openFolder(const QUrl& url, bool watchLive)
 {
-    const QString dir = url.toLocalFile();
+    const QString dir = toPath(url);
     openPaths({dir});
     if (watchLive) {
         m_watcher.watch(dir);
@@ -679,7 +712,8 @@ void AppController::setBusy(bool b)
 bool AppController::exportCsv(const QUrl& url)
 {
     if (!m_processed) return false;
-    QSaveFile f(url.toLocalFile());
+    QSaveFile f(toPath(url));
+    f.setDirectWriteFallback(true);  // content:// URIs cannot be written via a temporary file
     if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
         setStatus(tr("Export failed: %1").arg(f.errorString()));
         return false;
@@ -700,7 +734,7 @@ bool AppController::exportCsv(const QUrl& url)
         setStatus(tr("Export failed: %1").arg(f.errorString()));
         return false;
     }
-    setStatus(tr("Exported %1 scans to %2").arg(d.scanCount()).arg(QFileInfo(url.toLocalFile()).fileName()));
+    setStatus(tr("Exported %1 scans to %2").arg(d.scanCount()).arg(QFileInfo(f.fileName()).fileName()));
     return true;
 }
 
@@ -712,7 +746,7 @@ bool AppController::loadNoise(const QUrl& url, bool ti)
 {
     Entry* e = current();
     if (!e) return false;
-    const QString path = url.toLocalFile();
+    const QString path = toPath(url);
     auc::noise::NoiseVector n;
     const auto type = ti ? auc::noise::Type::TimeInvariant : auc::noise::Type::RadiallyInvariant;
     const auc::IoResult res = auc::noise::readNoiseFile(path, type, n);
