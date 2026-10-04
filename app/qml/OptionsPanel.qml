@@ -1,6 +1,9 @@
+// SPDX-FileCopyrightText: 2026 Lukas Dobler
+// SPDX-License-Identifier: LGPL-3.0-or-later
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 
 ColumnLayout {
     id: root
@@ -53,6 +56,75 @@ ColumnLayout {
                 value: root.controller.everyNth
                 editable: true
                 onValueModified: root.controller.everyNth = value
+                Layout.fillWidth: true
+            }
+        }
+    }
+
+    FileDialog {
+        id: noiseDialog
+        property bool ti: true
+        title: ti ? qsTr("Load time-invariant (TI) noise") : qsTr("Load radially invariant (RI) noise")
+        nameFilters: [qsTr("Noise files (*.xml *.txt *.csv *.dat)"), qsTr("All files (*)")]
+        onAccepted: root.controller.loadNoise(selectedFile, ti)
+    }
+
+    component NoiseRow: RowLayout {
+        id: row
+        property bool ti
+        property string fileName
+        property bool applied
+        signal appliedToggled(bool on)
+        Layout.fillWidth: true
+        CheckBox {
+            text: row.ti ? "TI" : "RI"
+            enabled: row.fileName !== ""
+            checked: row.applied
+            onToggled: row.appliedToggled(checked)
+            ToolTip.visible: hovered
+            ToolTip.text: row.ti ? qsTr("Subtract time-invariant noise (one value per radius point)")
+                                 : qsTr("Subtract radially invariant noise (one value per scan)")
+        }
+        Label {
+            text: row.fileName !== "" ? row.fileName : qsTr("none")
+            elide: Text.ElideMiddle
+            opacity: row.fileName !== "" ? 1 : 0.5
+            Layout.fillWidth: true
+        }
+        Button {
+            text: row.fileName !== "" ? "✕" : qsTr("Load…")
+            flat: row.fileName !== ""
+            onClicked: {
+                if (row.fileName !== "") root.controller.clearNoise(row.ti)
+                else { noiseDialog.ti = row.ti; noiseDialog.open() }
+            }
+        }
+    }
+
+    GroupBox {
+        title: qsTr("Noise")
+        Layout.fillWidth: true
+        enabled: root.hasData
+        ColumnLayout {
+            anchors.fill: parent
+            NoiseRow {
+                ti: true
+                fileName: root.controller.tiNoiseName
+                applied: root.controller.applyTiNoise
+                onAppliedToggled: (on) => root.controller.applyTiNoise = on
+            }
+            NoiseRow {
+                ti: false
+                fileName: root.controller.riNoiseName
+                applied: root.controller.applyRiNoise
+                onAppliedToggled: (on) => root.controller.applyRiNoise = on
+            }
+            Label {
+                visible: root.controller.noiseError !== ""
+                text: root.controller.noiseError
+                color: "#c0262d"
+                wrapMode: Text.Wrap
+                font.pixelSize: 11
                 Layout.fillWidth: true
             }
         }

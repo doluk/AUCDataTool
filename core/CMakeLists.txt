@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Lukas Dobler
+# SPDX-License-Identifier: LGPL-3.0-or-later
+
 add_library(auccore STATIC
     include/auc/Dataset.h
     include/auc/AucFile.h

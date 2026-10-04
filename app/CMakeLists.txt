@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Lukas Dobler
+# SPDX-License-Identifier: LGPL-3.0-or-later
+
 find_package(Qt6 REQUIRED COMPONENTS Gui Quick QuickControls2 Concurrent)
 
 qt_add_executable(aucviewer WIN32 MACOSX_BUNDLE

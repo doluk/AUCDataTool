@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Lukas Dobler
+// SPDX-License-Identifier: LGPL-3.0-or-later
 #pragma once
 
 #include "Colormap.h"
@@ -5,6 +7,7 @@
 
 #include "auc/Dataset.h"
 #include "auc/FolderWatcher.h"
+#include "auc/Noise.h"
 
 #include <QFutureWatcher>
 #include <QHash>
@@ -15,10 +18,12 @@
 #include <QtQml/qqmlregistration.h>
 
 #include <memory>
+#include <optional>
 
 #include "ScanPlot.h"
 
-/// Processing options, applied in this order: reverse → spike filter → offset → scan selection.
+/// Processing options. Order: noise subtraction (raw scans) → scan selection → reverse →
+/// spike filter → offset → integration.
 struct ProcessingOptions {
     bool reverse = false;
     bool removeSpikes = false;
@@ -32,6 +37,8 @@ struct ProcessingOptions {
     double intR1 = 0.0, intR2 = 0.0;
     bool radialWeight = false;
     Colormap::Kind colormap = Colormap::Viridis;
+    bool applyTi = true;
+    bool applyRi = true;
 };
 
 /// Owns loaded datasets, runs processing off the GUI thread and feeds the plots.
@@ -70,6 +77,13 @@ class AppController : public QObject {
     Q_PROPERTY(double intR2 MEMBER m_optIntR2 NOTIFY optionsChanged)
     Q_PROPERTY(bool radialWeight MEMBER m_optRadialWeight NOTIFY optionsChanged)
     Q_PROPERTY(int colormap MEMBER m_optColormap NOTIFY optionsChanged)
+    Q_PROPERTY(bool applyTiNoise MEMBER m_optApplyTi NOTIFY optionsChanged)
+    Q_PROPERTY(bool applyRiNoise MEMBER m_optApplyRi NOTIFY optionsChanged)
+
+    // Noise files attached to the current dataset (file name, or empty)
+    Q_PROPERTY(QString tiNoiseName READ tiNoiseName NOTIFY noiseChanged)
+    Q_PROPERTY(QString riNoiseName READ riNoiseName NOTIFY noiseChanged)
+    Q_PROPERTY(QString noiseError READ noiseError NOTIFY noiseChanged)
 
 public:
     explicit AppController(QObject* parent = nullptr);
@@ -99,6 +113,13 @@ public:
     Q_INVOKABLE void stopLive();
     Q_INVOKABLE void closeAll();
     Q_INVOKABLE bool exportCsv(const QUrl& url);
+    /// Loads a TI (`ti`=true) or RI noise file for the current dataset.
+    Q_INVOKABLE bool loadNoise(const QUrl& url, bool ti);
+    Q_INVOKABLE void clearNoise(bool ti);
+
+    QString tiNoiseName() const;
+    QString riNoiseName() const;
+    QString noiseError() const { return m_noiseError; }
     /// Loads files from plain paths (command line).
     void openPaths(const QStringList& paths);
 
@@ -112,6 +133,7 @@ signals:
     void integralPlotChanged();
     void datasetChanged();
     void optionsChanged();
+    void noiseChanged();
     /// Emitted after a processing run delivered new plot data.
     void processed(double milliseconds);
 
@@ -120,6 +142,8 @@ private:
         QString path;
         std::shared_ptr<const auc::Dataset> data;  ///< null until loaded
         QString error;
+        std::optional<auc::noise::NoiseVector> ti, ri;
+        QString tiPath, riPath;
     };
     struct Result {
         quint64 generation = 0;
@@ -128,6 +152,7 @@ private:
         std::shared_ptr<const auc::Dataset> processed;
         double ms = 0.0;
         bool keepView = false;
+        QString noiseError;
     };
 
     void addPath(const QString& path, bool select);
@@ -137,8 +162,11 @@ private:
     void setStatus(const QString& s);
     void setBusy(bool b);
     ProcessingOptions currentOptions() const;
-    static Result runProcessing(std::shared_ptr<const auc::Dataset> raw, ProcessingOptions opt, quint64 gen,
-                                bool keepView);
+    struct NoiseInput {
+        std::optional<auc::noise::NoiseVector> ti, ri;
+    };
+    static Result runProcessing(std::shared_ptr<const auc::Dataset> raw, NoiseInput noise, ProcessingOptions opt,
+                                quint64 gen, bool keepView);
     const auc::Dataset* currentData() const;
 
     QList<Entry> m_entries;
@@ -163,4 +191,7 @@ private:
     double m_optIntR1 = 0.0, m_optIntR2 = 0.0;
     bool m_optRadialWeight = false;
     int m_optColormap = Colormap::Viridis;
+    bool m_optApplyTi = true;
+    bool m_optApplyRi = true;
+    QString m_noiseError;
 };

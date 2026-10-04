@@ -1,40 +1,55 @@
+// SPDX-FileCopyrightText: 2026 Lukas Dobler
+// SPDX-License-Identifier: LGPL-3.0-or-later
 #pragma once
 
+#include "auc/AucFile.h"
 #include "auc/Dataset.h"
+
+#include <QString>
 
 #include <vector>
 
-/// Systematic noise in sedimentation-velocity data.
+/// Systematic noise vectors, loaded from files and subtracted from the data.
 ///
-/// A residual matrix e_ij (scan i, radius point j), e.g. data minus a fitted model, is
-/// decomposed by least squares into
-///   e_ij ≈ b_j + β_i
-/// with b_j the time-invariant (TI) noise – a fixed radial pattern from optics and cell
-/// windows – and β_i the radially invariant (RI) noise – a per-scan baseline offset.
-/// For a complete matrix the least-squares solution is closed-form:
-///   β_i = mean_j(e_ij) − mean_ij(e_ij),   b_j = mean_i(e_ij)
-/// (the split of the grand mean is arbitrary; here it goes to b, so Σβ_i = 0).
-/// Subtracting both from the data removes the noise; this is the same model UltraScan fits
-/// jointly with its 2DSA/GA analyses.
+/// - Time-invariant (TI) noise: one value per radius point, the same for every scan
+///   (optics, window scratches). Usually covers only the edited radius range
+///   [minRadius, maxRadius] of the analysis that produced it.
+/// - Radially invariant (RI) noise: one value per scan, the same for every radius point
+///   (baseline jitter between scans).
+///
+/// Supported files:
+/// - UltraScan III noise XML: <NoiseData><noise type="ti|ri" minradius=".." maxradius="..">
+///   <d v="..."/>…</noise></NoiseData>
+/// - Plain text/CSV: one value per line, or two columns. For TI the first column is the
+///   radius (cm), for RI the scan number or time (ignored). Lines starting with '#' are
+///   comments; ',', ';', tab and space separate columns.
 namespace auc::noise {
 
-enum Components { TimeInvariant = 1, RadiallyInvariant = 2, Both = 3 };
+enum class Type { TimeInvariant, RadiallyInvariant };
 
-struct Result {
-    std::vector<double> ti;  ///< b_j, one per radius point (empty if not requested)
-    std::vector<double> ri;  ///< β_i, one per scan (empty if not requested)
-    double rmsBefore = 0.0;  ///< RMS of the residuals
-    double rmsAfter = 0.0;   ///< RMS after removing the fitted noise
+struct NoiseVector {
+    Type type = Type::TimeInvariant;
+    std::vector<double> values;
+    double minRadius = 0.0;  ///< TI only; 0 = unknown (values must then cover all points)
+    double maxRadius = 0.0;
+    QString description;
+    QString noiseGuid;
+    QString modelGuid;
 };
 
-/// Fits the requested noise components to `residuals` (scan values are the residuals;
-/// all scans must have the same point count).
-Result fit(const Dataset& residuals, Components which = Both);
+/// Reads a noise file. `expected` is the type for plain-text files; an XML file whose
+/// declared type differs from `expected` is rejected (a TI file loaded as RI is a mistake).
+IoResult readNoiseFile(const QString& path, Type expected, NoiseVector& out);
 
-/// Fits noise to (data − model), where `model` has the same shape as `data`.
-Result fitToModel(const Dataset& data, const Dataset& model, Components which = Both);
+/// Writes UltraScan-compatible noise XML.
+IoResult writeNoiseFile(const QString& path, const NoiseVector& noise);
 
-/// Subtracts fitted noise from `d` in place.
-void subtract(Dataset& d, const Result& noise);
+/// Subtracts (remove=true) or adds the noise. Returns an empty string on success, else a
+/// reason why the vector does not fit the dataset (nothing is changed then).
+///
+/// TI: if the vector is shorter than the scan, it is placed starting at the radius point
+/// nearest to minRadius; maxRadius must then match the last covered point within half a
+/// radial step. RI: the vector length must equal the dataset's scan count.
+QString apply(Dataset& d, const NoiseVector& noise, bool remove = true);
 
 }  // namespace auc::noise

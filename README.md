@@ -1,4 +1,4 @@
-# AUC Viewer (Qt 6)
+# AUCDataTool – AUC Viewer (Qt 6)
 
 Cross-platform viewer for analytical ultracentrifugation (AUC) raw data — a C++/Qt 6
 reimplementation of the LabVIEW **AUC-Viewer 2.2.2** (AG Cölfen, Universität Konstanz).
@@ -15,7 +15,7 @@ Targets Windows, macOS and Linux; the UI is Qt Quick so an Android build is poss
 | GPU scan plot (all scans in one pass, zoom/pan without re-upload) | done |
 | Scan range / every n-th, reverse, spike filter, offset (point, baseline region) | done |
 | Radial integration (∫A dr, ∫A·r dr) + integral-vs-time plot | done |
-| TI/RI noise decomposition (core library) | done, not in UI yet — see open questions |
+| TI/RI noise: load UltraScan noise XML or plain text, subtract per radius point / per scan | done |
 | Live folder watching | done |
 | CSV export | done |
 | Intensity → absorbance (reference channel / reference scans) | core done, UI pending |
@@ -41,11 +41,13 @@ Options: `-DAUC_BUILD_APP=OFF` builds only the core library, tools and tests (ne
 - `aucinfo FILE.auc` — header and scan summary.
 - `aucgen OUTDIR [--scans N --points N --cells N ...]` — synthetic sedimentation-velocity
   data (Faxén approximation, two species, TI/RI noise, meniscus artefact) for testing.
+  Also writes the injected TI/RI noise as UltraScan noise XML.
 
 ### App command line
 
 ```
-AucViewer [files/folders] [--set key=value ...] [--screenshot out.png] [--benchmark N]
+AucViewer [files/folders] [--set key=value ...] [--ti-noise FILE] [--ri-noise FILE]
+          [--screenshot out.png] [--benchmark N]
 ```
 `--set` applies processing options (e.g. `--set integrate=true --set everyNth=5`).
 `--benchmark N` renders N synthetic scans and reports upload and zoom-frame times.
@@ -86,7 +88,22 @@ Recovered from the block diagrams of AUC-Viewer 2.2.2 and implemented in
 | `select scans` / `cut w2t Calculation` | `proc::selectScans` | range + every n-th |
 
 New in this version: baseline-region offset, radial integration, TI/RI noise
-decomposition, live folder watching.
+subtraction from files, live folder watching.
+
+## Noise files
+
+TI (time-invariant, one value per radius point) and RI (radially invariant, one value
+per scan) noise is loaded per data file in the *Noise* panel and subtracted from the raw
+scans before any other processing.
+
+- **UltraScan III noise XML** (`<NoiseData><noise type="ti|ri" minradius=… maxradius=…><d v=…/>…`).
+  A TI vector from an edited range is placed by `minradius`; the range must match the
+  radius grid within half a step.
+- **Plain text / CSV**: one value per line, or two columns (radius, value for TI;
+  scan/time, value for RI). `#` starts a comment.
+
+An RI vector must have exactly as many values as the file has scans. Mismatches are
+reported and the noise is not applied.
 
 ## File format notes
 
@@ -97,8 +114,9 @@ seeded with 0xFFFFFFFF). Version 4 stores the wavelength as (λ − 180)·100, v
 
 ## Open questions
 
-- **TI/RI noise**: implemented as least-squares decomposition of a residual matrix
-  (data − model). What should the viewer use as the model — a fitted model from
-  UltraScan, a late-scan reference, or something else?
 - **Radial integration**: plain ∫A dr or r-weighted (both available)?
-- **License** of this code base.
+
+## License
+
+LGPL-3.0-or-later (see `LICENSE`; the LGPL incorporates the GPL-3.0 in `COPYING`).
+The `.auc` format handling follows the format used by UltraScan III (LGPL-3.0).

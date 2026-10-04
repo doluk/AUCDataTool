@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Lukas Dobler
+# SPDX-License-Identifier: LGPL-3.0-or-later
+
 find_package(Qt6 REQUIRED COMPONENTS Test)
 
 function(auc_add_test name)

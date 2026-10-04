@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Lukas Dobler
+// SPDX-License-Identifier: LGPL-3.0-or-later
 #include "AppController.h"
 #include "ScanPlot.h"
 
@@ -60,7 +62,9 @@ int main(int argc, char** argv)
     const QCommandLineOption setOpt(QStringLiteral("set"),
                                     QStringLiteral("Set a processing option, e.g. --set integrate=true (repeatable)."),
                                     QStringLiteral("key=value"));
-    parser.addOptions({shotOpt, benchOpt, sizeOpt, setOpt});
+    const QCommandLineOption tiOpt(QStringLiteral("ti-noise"), QStringLiteral("TI noise file for the first data file."), QStringLiteral("file"));
+    const QCommandLineOption riOpt(QStringLiteral("ri-noise"), QStringLiteral("RI noise file for the first data file."), QStringLiteral("file"));
+    parser.addOptions({shotOpt, benchOpt, sizeOpt, setOpt, tiOpt, riOpt});
     parser.process(app);
 
 #ifdef Q_OS_ANDROID
@@ -86,6 +90,8 @@ int main(int argc, char** argv)
     auto* controller = window->property("controller").value<AppController*>();
     if (controller) {
         controller->openPaths(parser.positionalArguments());
+        if (parser.isSet(tiOpt)) controller->loadNoise(QUrl::fromLocalFile(parser.value(tiOpt)), true);
+        if (parser.isSet(riOpt)) controller->loadNoise(QUrl::fromLocalFile(parser.value(riOpt)), false);
         for (const QString& kv : parser.values(setOpt)) {
             const qsizetype eq = kv.indexOf(QLatin1Char('='));
             if (eq <= 0 || !controller->setProperty(kv.left(eq).toUtf8().constData(), kv.mid(eq + 1)))

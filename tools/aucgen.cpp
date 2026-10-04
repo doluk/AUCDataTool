@@ -1,11 +1,15 @@
+// SPDX-FileCopyrightText: 2026 Lukas Dobler
+// SPDX-License-Identifier: LGPL-3.0-or-later
 // aucgen – synthesise sedimentation-velocity data as openAUC (.auc) files.
 //
 // Concentration profile: Faxén-type approximation of the Lamm equation for one
 // non-interacting species,
 //   c(r,t) = c0 · exp(−2sω²t) · ½·erfc((r_b(t) − r) / (2√(Dt))),  r_b = r_m·exp(sω²t),
 // plus optional time-invariant noise (fixed radial pattern), radially invariant noise
-// (per-scan baseline jitter), Gaussian noise and a meniscus spike.
+// (per-scan baseline jitter), Gaussian noise and a meniscus spike. The injected TI and RI
+// noise is also written as UltraScan noise XML (TI over an edited sub-range) for testing.
 #include "auc/AucFile.h"
+#include "auc/Noise.h"
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
@@ -87,6 +91,7 @@ int main(int argc, char** argv)
         for (int j = 0; j < points; ++j) d.radius[size_t(j)] = 5.8 + j * dr;
 
         std::vector<double> ti(static_cast<size_t>(points), 0.0);
+        std::vector<double> riValues;
         for (int j = 0; j < points; ++j) {
             const double r = d.radius[size_t(j)];
             ti[size_t(j)] = tiAmp * (std::sin(37.0 * r) + 0.5 * std::sin(113.0 * r + 1.3));
@@ -101,6 +106,7 @@ int main(int argc, char** argv)
             s.wavelength = 280.0;
             s.deltaR = dr;
             const double ri = riSd * gauss(rng);
+            riValues.push_back(ri);
             const double t = s.seconds;
             s.values.resize(size_t(points));
             for (int j = 0; j < points; ++j) {
@@ -128,6 +134,29 @@ int main(int argc, char** argv)
             return 1;
         }
         QTextStream(stdout) << "wrote " << file << "\n";
+
+        // Noise files as produced by an UltraScan analysis of an edited range (here: from
+        // 0.1 cm inside the data range on both ends).
+        const QString base = QDir(outDir).filePath(QStringLiteral("synthetic.RA.%1.A.280").arg(cell));
+        auc::noise::NoiseVector tiNoise;
+        tiNoise.type = auc::noise::Type::TimeInvariant;
+        tiNoise.description = QStringLiteral("aucgen TI noise, cell %1").arg(cell);
+        const int j0 = int(std::lround(0.1 / dr)), j1 = points - 1 - j0;
+        tiNoise.minRadius = d.radius[size_t(j0)];
+        tiNoise.maxRadius = d.radius[size_t(j1)];
+        tiNoise.values.assign(ti.begin() + j0, ti.begin() + j1 + 1);
+        auc::noise::NoiseVector riNoise;
+        riNoise.type = auc::noise::Type::RadiallyInvariant;
+        riNoise.description = QStringLiteral("aucgen RI noise, cell %1").arg(cell);
+        riNoise.values = riValues;
+        for (const auto& [n, suffix] : {std::pair{&tiNoise, ".ti_noise.xml"}, std::pair{&riNoise, ".ri_noise.xml"}}) {
+            const QString nf = base + QLatin1String(suffix);
+            if (const auc::IoResult r = auc::noise::writeNoiseFile(nf, *n); !r.ok()) {
+                err << nf << ": " << r.message << "\n";
+                return 1;
+            }
+            QTextStream(stdout) << "wrote " << nf << "\n";
+        }
     }
     return 0;
 }

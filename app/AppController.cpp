@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Lukas Dobler
+// SPDX-License-Identifier: LGPL-3.0-or-later
 #include "AppController.h"
 
 #include "ScanPlot.h"
@@ -84,7 +86,9 @@ void AppController::addPath(const QString& path, bool select)
             return;
         }
     }
-    m_entries.push_back({abs, nullptr, {}});
+    Entry entry;
+    entry.path = abs;
+    m_entries.push_back(std::move(entry));
     emit filesChanged();
     if (select) setCurrentIndex(int(m_entries.size()) - 1);
 }
@@ -159,6 +163,7 @@ void AppController::setCurrentIndex(int i)
     if (i == m_current && (i < 0 || m_entries[i].data)) return;
     m_current = i;
     emit currentIndexChanged();
+    emit noiseChanged();
     if (i < 0) return;
     loadEntry(i);
     emit datasetChanged();
@@ -271,11 +276,13 @@ ProcessingOptions AppController::currentOptions() const
     o.intR2 = m_optIntR2;
     o.radialWeight = m_optRadialWeight;
     o.colormap = Colormap::Kind(std::clamp(m_optColormap, 0, 3));
+    o.applyTi = m_optApplyTi;
+    o.applyRi = m_optApplyRi;
     return o;
 }
 
-AppController::Result AppController::runProcessing(std::shared_ptr<const auc::Dataset> raw, ProcessingOptions o,
-                                                   quint64 gen, bool keepView)
+AppController::Result AppController::runProcessing(std::shared_ptr<const auc::Dataset> raw, NoiseInput noise,
+                                                   ProcessingOptions o, quint64 gen, bool keepView)
 {
     QElapsedTimer t;
     t.start();
@@ -284,17 +291,38 @@ AppController::Result AppController::runProcessing(std::shared_ptr<const auc::Da
     res.keepView = keepView;
 
     auto d = std::make_shared<auc::Dataset>();
-    // Copy only the selected scans first: everything after is linear in the shown data.
-    d->type = raw->type;
-    d->cell = raw->cell;
-    d->channel = raw->channel;
-    d->guid = raw->guid;
-    d->description = raw->description;
-    d->radius = raw->radius;
+    const bool withTi = o.applyTi && noise.ti;
+    const bool withRi = o.applyRi && noise.ri;
+    std::vector<std::size_t> idx;
+    if (withTi || withRi) {
+        // Noise refers to the scan indices and radius grid of the raw file, so it is
+        // subtracted before any selection or reversal.
+        auc::Dataset clean = *raw;
+        QStringList errors;
+        if (withTi)
+            if (QString e = auc::noise::apply(clean, *noise.ti); !e.isEmpty()) errors << e;
+        if (withRi)
+            if (QString e = auc::noise::apply(clean, *noise.ri); !e.isEmpty()) errors << e;
+        res.noiseError = errors.join(QStringLiteral("; "));
+        *d = std::move(clean);
+    }
     const std::size_t last = o.lastScan < 0 ? raw->scanCount() - 1 : std::size_t(o.lastScan);
-    const auto idx = auc::proc::selectScans(raw->scanCount(), std::size_t(o.firstScan), last, std::size_t(o.everyNth));
-    d->scans.reserve(idx.size());
-    for (std::size_t i : idx) d->scans.push_back(raw->scans[i]);
+    idx = auc::proc::selectScans(raw->scanCount(), std::size_t(o.firstScan), last, std::size_t(o.everyNth));
+    std::vector<auc::Scan> kept;
+    kept.reserve(idx.size());
+    if (withTi || withRi) {
+        for (std::size_t i : idx) kept.push_back(std::move(d->scans[i]));
+    } else {
+        // No noise: copy only metadata and the selected scans.
+        d->type = raw->type;
+        d->cell = raw->cell;
+        d->channel = raw->channel;
+        d->guid = raw->guid;
+        d->description = raw->description;
+        d->radius = raw->radius;
+        for (std::size_t i : idx) kept.push_back(raw->scans[i]);
+    }
+    d->scans = std::move(kept);
 
     if (o.reverse) auc::proc::reverseRadius(*d);
     if (o.removeSpikes) auc::proc::removeSpikes(*d);
@@ -345,8 +373,9 @@ void AppController::reprocess(bool keepView)
         return;
     }
     setBusy(true);
-    m_future.setFuture(QtConcurrent::run(&AppController::runProcessing, entry->data, currentOptions(), ++m_generation,
-                                         keepView));
+    NoiseInput noise{entry->ti, entry->ri};
+    m_future.setFuture(QtConcurrent::run(&AppController::runProcessing, entry->data, std::move(noise), currentOptions(),
+                                         ++m_generation, keepView));
 }
 
 void AppController::onProcessed()
@@ -361,6 +390,11 @@ void AppController::onProcessed()
         if (m_future.isRunning()) return;  // a newer result is coming
     }
     m_processed = r.processed;
+    if (r.noiseError != m_noiseError) {
+        m_noiseError = r.noiseError;
+        emit noiseChanged();
+        if (!m_noiseError.isEmpty()) setStatus(tr("Noise not applied: %1").arg(m_noiseError));
+    }
     if (m_scanPlot) m_scanPlot->setSeries(r.scans, r.keepView);
     if (m_integralPlot) m_integralPlot->setSeries(r.integral, false);
     emit processed(r.ms);
@@ -424,4 +458,60 @@ bool AppController::exportCsv(const QUrl& url)
     }
     setStatus(tr("Exported %1 scans to %2").arg(d.scanCount()).arg(QFileInfo(url.toLocalFile()).fileName()));
     return true;
+}
+
+// ---------------------------------------------------------------------------------------
+// Noise files
+// ---------------------------------------------------------------------------------------
+
+bool AppController::loadNoise(const QUrl& url, bool ti)
+{
+    if (m_current < 0 || m_current >= m_entries.size()) return false;
+    const QString path = url.toLocalFile();
+    auc::noise::NoiseVector n;
+    const auto type = ti ? auc::noise::Type::TimeInvariant : auc::noise::Type::RadiallyInvariant;
+    const auc::IoResult res = auc::noise::readNoiseFile(path, type, n);
+    if (!res.ok()) {
+        setStatus(tr("%1: %2").arg(QFileInfo(path).fileName(), res.message));
+        return false;
+    }
+    Entry& e = m_entries[m_current];
+    if (ti) {
+        e.ti = std::move(n);
+        e.tiPath = path;
+    } else {
+        e.ri = std::move(n);
+        e.riPath = path;
+    }
+    emit noiseChanged();
+    setStatus(tr("Loaded %1 noise: %2 (%3 values)")
+                  .arg(ti ? QStringLiteral("TI") : QStringLiteral("RI"), QFileInfo(path).fileName())
+                  .arg(ti ? e.ti->values.size() : e.ri->values.size()));
+    reprocess(true);
+    return true;
+}
+
+void AppController::clearNoise(bool ti)
+{
+    if (m_current < 0 || m_current >= m_entries.size()) return;
+    Entry& e = m_entries[m_current];
+    if (ti) {
+        e.ti.reset();
+        e.tiPath.clear();
+    } else {
+        e.ri.reset();
+        e.riPath.clear();
+    }
+    emit noiseChanged();
+    reprocess(true);
+}
+
+QString AppController::tiNoiseName() const
+{
+    return (m_current >= 0 && m_current < m_entries.size()) ? QFileInfo(m_entries[m_current].tiPath).fileName() : QString();
+}
+
+QString AppController::riNoiseName() const
+{
+    return (m_current >= 0 && m_current < m_entries.size()) ? QFileInfo(m_entries[m_current].riPath).fileName() : QString();
 }

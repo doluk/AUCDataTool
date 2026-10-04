@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Lukas Dobler
+// SPDX-License-Identifier: LGPL-3.0-or-later
 import QtQuick
 import QtQuick.Controls
 

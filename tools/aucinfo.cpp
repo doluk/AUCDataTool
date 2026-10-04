@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Lukas Dobler
+// SPDX-License-Identifier: LGPL-3.0-or-later
 // aucinfo – print header and scan summary of openAUC (.auc) files.
 #include "auc/AucFile.h"
 
