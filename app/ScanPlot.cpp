@@ -436,7 +436,11 @@ std::pair<std::size_t, std::size_t> ScanPlot::visibleRange(double x0, double x1)
 int ScanPlot::curveAt(double px, double py) const
 {
     if (!hasData()) return -1;
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
+    constexpr double kTolerance = 12.0;  // finger (device-independent pixels)
+#else
     constexpr double kTolerance = 5.0;
+#endif
     const QPointF p(px, py);
     const auto& xs = m_series->x;
     int best = -1;

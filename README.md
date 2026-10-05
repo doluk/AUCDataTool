@@ -80,6 +80,12 @@ and the `QT_ANDROID_KEYSTORE_PATH/_ALIAS/_STORE_PASS/_KEY_PASS` environment vari
 the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` secrets if set,
 otherwise a temporary key (updates of such an APK need an uninstall first).
 
+**Phone layout** (window narrower than 1000 dp or lower than 520 dp, e.g. Galaxy S26):
+plots use the full screen; ☰ opens the channel list, the slider icon the options, ⋮ the
+actions (open, watch folder, export, save graph); the fit icon autoscales. In landscape the
+view tabs move into the toolbar. Touch: drag pans, pinch zooms, long press + drag draws a
+zoom box, double tap autoscales, tap selects a curve; markers have wider grips.
+
 On first start the app asks for *All files access* (Android ≥ 11; storage permission on 9/10):
 runs are folders of scan files plus `*.mwrs.xml` and are read in place. Files picked in
 the system dialog on internal storage or an SD card are mapped to their paths; files from other

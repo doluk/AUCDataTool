@@ -33,6 +33,7 @@ set(auc_qml_files
     qml/ColorBar.qml
     qml/ExportDialog.qml
     qml/RunConditionsView.qml
+    qml/IconButton.qml
 )
 set(auc_sources
     AppController.h AppController.cpp

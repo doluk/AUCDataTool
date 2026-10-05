@@ -17,6 +17,8 @@ Item {
     signal markerMoved(string key, real value)
     /// Left click selects the curve under the cursor (plot.selectedCurve).
     property bool curvesSelectable: false
+    /// Finger input: wider marker grips; long press + drag draws the zoom box.
+    readonly property bool touchUi: Qt.platform.os === "android" || Qt.platform.os === "ios"
 
     readonly property int leftMargin: 66
     readonly property int bottomMargin: 46
@@ -59,11 +61,11 @@ Item {
                 required property int index
                 readonly property var modelData: root.markers[index] ?? { value: 0, color: "transparent", label: "", key: "" }
                 property real px: { plot.viewRect; plot.width; return plot.toPixelX(modelData.value) }
-                x: px - 6
+                x: px - width / 2
                 y: 0
-                width: 12
+                width: root.touchUi ? 40 : 12
                 height: markerLayer.height
-                visible: px >= -6 && px <= plot.width + 6
+                visible: px >= -width / 2 && px <= plot.width + width / 2
                 Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: dragArea.containsMouse || dragArea.pressed ? 3 : 2
@@ -74,7 +76,7 @@ Item {
                     text: marker.modelData.label
                     color: marker.modelData.color
                     font.pixelSize: 11
-                    x: 9
+                    x: marker.width / 2 + 3
                     y: 4
                 }
                 MouseArea {
@@ -150,6 +152,8 @@ Item {
         visible: !plot.hasData
         text: root.placeholder
         horizontalAlignment: Text.AlignHCenter
+        width: Math.min(implicitWidth, plot.width - 16)
+        wrapMode: Text.WordWrap
         opacity: 0.55
     }
 
@@ -160,7 +164,7 @@ Item {
         anchors.top: plot.top
         anchors.margins: 6
         font.pixelSize: 11
-        visible: mouse.containsMouse && plot.hasData
+        visible: (mouse.containsMouse || mouse.pressed) && plot.hasData
         text: { plot.viewRect; plot.width; plot.height  // re-evaluate when the view changes
                 return "x = " + plot.toDataX(mouse.mouseX).toPrecision(5) + "   y = " + plot.toDataY(mouse.mouseY).toPrecision(4) }
         background: Rectangle { color: palette.base; opacity: 0.85; radius: 3 }
@@ -185,32 +189,37 @@ Item {
         property point last
         property point start
 
+        function startBand(px, py) {
+            start = Qt.point(px, py)
+            band.x = plot.x + px; band.y = plot.y + py
+            band.width = 0; band.height = 0
+            band.visible = true
+        }
+
         onPressed: (e) => {
             last = Qt.point(e.x, e.y)
             start = last
-            if (e.button === Qt.RightButton) {
-                band.x = plot.x + e.x; band.y = plot.y + e.y
-                band.width = 0; band.height = 0
-                band.visible = true
-            }
+            if (e.button === Qt.RightButton) startBand(e.x, e.y)
         }
+        // Touch has no right button: long press, then drag the zoom box.
+        onPressAndHold: (e) => { if (root.touchUi && !band.visible) startBand(e.x, e.y) }
         onPositionChanged: (e) => {
-            if (pressedButtons & Qt.LeftButton) {
-                plot.panByPixels(e.x - last.x, e.y - last.y)
-                last = Qt.point(e.x, e.y)
-            } else if (pressedButtons & Qt.RightButton) {
+            if (band.visible) {
                 band.x = plot.x + Math.min(start.x, e.x)
                 band.y = plot.y + Math.min(start.y, e.y)
                 band.width = Math.abs(e.x - start.x)
                 band.height = Math.abs(e.y - start.y)
+            } else if (pressedButtons & Qt.LeftButton) {
+                plot.panByPixels(e.x - last.x, e.y - last.y)
+                last = Qt.point(e.x, e.y)
             }
         }
         onReleased: (e) => {
             if (band.visible) {
                 band.visible = false
-                plot.zoomToPixelRect(start.x, start.y, e.x, e.y)
+                if (band.width > 6 && band.height > 6) plot.zoomToPixelRect(start.x, start.y, e.x, e.y)
             } else if (e.button === Qt.LeftButton && root.curvesSelectable
-                       && Math.abs(e.x - start.x) + Math.abs(e.y - start.y) < 4) {
+                       && Math.abs(e.x - start.x) + Math.abs(e.y - start.y) < (root.touchUi ? 16 : 4)) {
                 plot.selectedCurve = plot.curveAt(e.x, e.y)  // click (not a pan)
             }
         }
