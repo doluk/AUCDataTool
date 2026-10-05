@@ -244,14 +244,34 @@ ColumnLayout {
                 currentIndex: root.controller.referenceChoice
                 onActivated: (i) => root.controller.referenceChoice = i
                 ToolTip.visible: hovered
-                ToolTip.text: qsTr("Channel whose intensity is used as I₀ in A = −log₁₀(I/I₀). Default: channel B of the same cell.")
+                ToolTip.text: qsTr("Channel whose intensity is used as I₀ in A = −log₁₀(I/I₀). Default: channel B of the same cell.\nWith “Radial area” and None, the region of this channel itself is used.")
             }
             ComboBox {
-                visible: !root.controller.dataIsAbsorbance && root.controller.referenceChoice > 0
+                visible: !root.controller.dataIsAbsorbance
+                         && (root.controller.referenceChoice > 0 || root.controller.displayMode === 1)
                 Layout.fillWidth: true
-                model: [qsTr("Scan by scan"), qsTr("Mean of reference scans")]
+                model: [qsTr("Scan by scan"), qsTr("Mean of reference scans"), qsTr("Radial area (per scan)")]
                 currentIndex: root.controller.referenceMode
                 onActivated: (i) => root.controller.referenceMode = i
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Radial area: I₀ of scan i is the mean intensity of scan i over r₁…r₂ of the reference channel, or of this channel if the reference is None.")
+            }
+            GridLayout {
+                columns: 2
+                visible: !root.controller.dataIsAbsorbance && root.controller.referenceMode === 2
+                Layout.fillWidth: true
+                Label { text: qsTr("r₁ (cm)") }
+                NumberField {
+                    Layout.fillWidth: true
+                    value: root.controller.refR1
+                    onCommitted: (v) => root.controller.refR1 = v
+                }
+                Label { text: qsTr("r₂ (cm)") }
+                NumberField {
+                    Layout.fillWidth: true
+                    value: root.controller.refR2
+                    onCommitted: (v) => root.controller.refR2 = v
+                }
             }
             GridLayout {
                 columns: root.compact ? 2 : 4

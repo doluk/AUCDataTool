@@ -16,7 +16,7 @@ Targets Windows, macOS, Linux and Android (Qt Quick UI).
 | Beckman XL ASCII `.RA/.RI/.IP/.FI/.WA/.WI` (XL-A/XL-I, Optima and UltraScan exports); wavelength folders (`2A280`, `2A230`) combined; sample + reference intensity columns | done |
 | Lazy wavelength slices (runs of 8 cells × 2 channels × 600+ λ never loaded completely) | done |
 | Wavelength selection, multi-wavelength averaging (MWA) over a λ range | done |
-| Intensity ↔ absorbance with a reference channel (scan by scan or mean of reference scans) | done |
+| Intensity ↔ absorbance with a reference channel (scan by scan, mean of reference scans or radial area) | done |
 | Dark current (`.mw` v1.2): toggle subtracted/not subtracted | done |
 | GPU scan plot (all scans in one pass, zoom/pan without re-upload) | done |
 | Curve styles: colour, width, dash pattern, markers, visibility per scan (click to select) and for all scans | done |
@@ -127,6 +127,10 @@ quits, e.g. absorbance at 260–280 nm, every 2nd wavelength, as UltraScan files
   same cell is used (the AUC-Viewer convention: A/S = sample, B = reference).
   - *Scan by scan*: sample scan i against reference scan i.
   - *Mean of reference scans*: every scan against the mean of reference scans *k…m*.
+  - *Radial area (per scan)*: I₀ of scan i is the scalar mean intensity of scan i over
+    r₁…r₂ of the reference channel, or of the channel itself if the reference is *None*
+    (e.g. an air or solvent region). The region is set in the panel or by dragging the
+    I₀ markers in the plot. Not in the LabVIEW program.
   - A = −log₁₀(I/I₀) where I and I₀ exceed 100 counts; other points are set to 3.0
     (as in the LabVIEW program).
 - **Spectra.** *Show spectra at a radius* adds a plot of all selected scans against

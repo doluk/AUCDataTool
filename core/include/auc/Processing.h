@@ -58,6 +58,17 @@ std::string absorbanceScanByScan(Dataset& sample, const Dataset& reference, cons
 std::string absorbanceMeanReference(Dataset& sample, const Dataset& reference, std::size_t first, std::size_t last,
                                     const AbsorbanceParams& p = {});
 
+/// Mean of `values` over the points whose radius lies in [r1, r2] (either order). NaN if
+/// the window contains no point.
+double windowMean(std::span<const float> values, std::span<const double> radius, double r1, double r2);
+
+/// Scalar reference per scan: sample scan i against I0_i, the mean of reference scan i over
+/// r ∈ [r1, r2] on the reference's own radius grid (the sample itself may be passed as
+/// reference, e.g. for an air/solvent region). The result has min(sample, reference) scans.
+/// Returns an empty string on success, else why no reference could be formed.
+std::string absorbanceRadialReference(Dataset& sample, const Dataset& reference, double r1, double r2,
+                                      const AbsorbanceParams& p = {});
+
 // ---------------------------------------------------------------------------------------
 // Corrections
 // ---------------------------------------------------------------------------------------

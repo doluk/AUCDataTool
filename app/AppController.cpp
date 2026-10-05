@@ -547,9 +547,18 @@ void AppController::setReferenceMode(int m)
 {
     Entry* e = current();
     if (!e) return;
-    const auto mode = m == 1 ? ReferenceMode::MeanOfScans : ReferenceMode::ScanByScan;
+    const auto mode = m == 2 ? ReferenceMode::RadialArea : m == 1 ? ReferenceMode::MeanOfScans : ReferenceMode::ScanByScan;
     if (mode == e->view.refMode) return;
     e->view.refMode = mode;
+    if (mode == ReferenceMode::RadialArea && e->view.refR1 == e->view.refR2 && e->src->radius.size() > 1) {
+        // Initial region: the innermost 5 % of the radius range.
+        const double a = e->src->radius.front(), b = e->src->radius.back();
+        e->view.refR1 = a;
+        e->view.refR2 = a + 0.05 * (b - a);
+    }
+    if (mode == ReferenceMode::RadialArea && e->view.display == DisplayMode::Intensity && !e->src->absorbanceData
+        && e->src->valueLabel.isEmpty())
+        e->view.display = DisplayMode::Absorbance;  // the region alone defines I0
     emit viewChanged();
     reprocess(true);
 }
@@ -576,6 +585,24 @@ int AppController::referenceScanCount() const
     const Entry* e = current();
     if (!e || e->view.reference < 0 || e->view.reference >= m_entries.size()) return 0;
     return int(m_entries[e->view.reference].src->scans.size());
+}
+double AppController::refR1() const { return current() ? current()->view.refR1 : 0.0; }
+void AppController::setRefR1(double r)
+{
+    Entry* e = current();
+    if (!e || r == e->view.refR1) return;
+    e->view.refR1 = r;
+    emit viewChanged();
+    reprocess(true);
+}
+double AppController::refR2() const { return current() ? current()->view.refR2 : 0.0; }
+void AppController::setRefR2(double r)
+{
+    Entry* e = current();
+    if (!e || r == e->view.refR2) return;
+    e->view.refR2 = r;
+    emit viewChanged();
+    reprocess(true);
 }
 bool AppController::darkSubtracted() const { return current() && current()->view.darkSubtracted; }
 void AppController::setDarkSubtracted(bool on)
@@ -661,9 +688,17 @@ AppController::Result AppController::runProcessing(Job job)
     adjustDark(*d, src, dark);
 
     // 2. Absorbance against the reference channel.
-    if (v.display == DisplayMode::Absorbance && !src.absorbanceData && src.valueLabel.isEmpty()) {
+    if (v.display == DisplayMode::Absorbance && !src.absorbanceData && src.valueLabel.isEmpty()
+        && v.refMode == ReferenceMode::RadialArea && !job.ref) {
+        // I0 from a region of this channel itself.
+        const auc::Dataset self = *d;
+        if (std::string err = auc::proc::absorbanceRadialReference(*d, self, v.refR1, v.refR2); !err.empty()) {
+            res.error = tr("Reference: %1").arg(QString::fromStdString(err));
+            return res;
+        }
+    } else if (v.display == DisplayMode::Absorbance && !src.absorbanceData && src.valueLabel.isEmpty()) {
         if (!job.ref) {
-            res.error = tr("Choose a reference channel to show absorbance.");
+            res.error = tr("Choose a reference channel or the radial-area reference to show absorbance.");
             return res;
         }
         std::shared_ptr<const auc::Dataset> rraw;
@@ -682,6 +717,10 @@ AppController::Result AppController::runProcessing(Job job)
         if (v.refMode == ReferenceMode::ScanByScan) {
             const std::size_t before = d->scans.size();
             err = auc::proc::absorbanceScanByScan(*d, rd);
+            if (err.empty() && d->scans.size() < before) warnings << tr("reference has only %1 scans").arg(d->scans.size());
+        } else if (v.refMode == ReferenceMode::RadialArea) {
+            const std::size_t before = d->scans.size();
+            err = auc::proc::absorbanceRadialReference(*d, rd, v.refR1, v.refR2);
             if (err.empty() && d->scans.size() < before) warnings << tr("reference has only %1 scans").arg(d->scans.size());
         } else {
             const std::size_t last = v.refLast < 0 ? SIZE_MAX : std::size_t(v.refLast);
@@ -794,24 +833,34 @@ void AppController::computeSpectrum(const Job& job, const std::vector<std::size_
     auc::Dataset d = *raw;
     adjustDark(d, src);
     if (v.display == DisplayMode::Absorbance && !src.absorbanceData && src.valueLabel.isEmpty()) {
-        if (!job.ref || job.ref->absorbanceData) return;  // reported by the main pipeline
+        const bool radial = v.refMode == ReferenceMode::RadialArea;
+        const auc::ChannelSource* ref = radial && !job.ref ? &src : job.ref.get();
+        if (!ref || ref->absorbanceData) return;  // reported by the main pipeline
         std::size_t rf = 0, rc = 1;
-        window(*job.ref, rf, rc);
+        if (radial) {
+            // Spectra averaged over the reference region give I0 per scan and wavelength.
+            const std::size_t a = auc::proc::nearestIndex(ref->radius, v.refR1);
+            const std::size_t b = auc::proc::nearestIndex(ref->radius, v.refR2);
+            rf = std::min(a, b);
+            rc = std::max(a, b) - rf + 1;
+        } else {
+            window(*ref, rf, rc);
+        }
         std::shared_ptr<const auc::Dataset> rraw;
-        if (auc::IoResult r = job.ref->spectra(rf, rc, rraw); !r.ok()) {
+        if (auc::IoResult r = ref->spectra(rf, rc, rraw); !r.ok()) {
             warnings << tr("reference spectrum: %1").arg(r.message);
             return;
         }
         auc::Dataset rd = *rraw;
-        adjustDark(rd, *job.ref);
+        adjustDark(rd, *ref);
         if (rd.radius != d.radius) {
             warnings << tr("spectrum: the reference channel has other wavelengths");
             return;
         }
-        const std::string err = v.refMode == ReferenceMode::ScanByScan
-            ? auc::proc::absorbanceScanByScan(d, rd)
-            : auc::proc::absorbanceMeanReference(d, rd, std::size_t(std::max(0, v.refFirst)),
-                                                 v.refLast < 0 ? SIZE_MAX : std::size_t(v.refLast));
+        const std::string err = v.refMode == ReferenceMode::MeanOfScans
+            ? auc::proc::absorbanceMeanReference(d, rd, std::size_t(std::max(0, v.refFirst)),
+                                                 v.refLast < 0 ? SIZE_MAX : std::size_t(v.refLast))
+            : auc::proc::absorbanceScanByScan(d, rd);
         if (!err.empty()) {
             warnings << tr("spectrum: %1").arg(QString::fromStdString(err));
             return;
@@ -921,22 +970,51 @@ SurfaceGridPtr AppController::computeSurface(const Job& job, const auc::Dataset&
     auto adjustDark = [&](std::vector<float>& mat, const auc::ChannelSource& c) {
         if (c.darkCurrent.empty() || v.darkSubtracted == c.darkSubtractedInFile) return;
         const float sign = v.darkSubtracted ? -1.f : 1.f;
+        const std::size_t n = c.radius.size();
         for (std::size_t k = 0; k < nwl && k < c.darkCurrent.size(); ++k)
-            for (std::size_t j = 0; j < np; ++j) mat[k * np + j] += sign * c.darkCurrent[k];
+            for (std::size_t j = 0; j < n; ++j) mat[k * n + j] += sign * c.darkCurrent[k];
     };
     adjustDark(m, src);
     if (v.display == DisplayMode::Absorbance && !src.absorbanceData && src.valueLabel.isEmpty()) {
-        const auc::ChannelSource* ref = job.ref.get();
+        const bool radial = v.refMode == ReferenceMode::RadialArea;
+        const auc::ChannelSource* ref = radial && !job.ref ? &src : job.ref.get();
         if (!ref || ref->absorbanceData) {
-            error = tr("Choose a reference channel to show absorbance.");
+            error = tr("Choose a reference channel or the radial-area reference to show absorbance.");
             return nullptr;
         }
-        if (ref->wavelengths.size() != nwl || ref->radius.size() != np) {
+        const std::size_t rnp = ref->radius.size();
+        if (ref->wavelengths.size() != nwl || (!radial && rnp != np)) {
             error = tr("The reference channel has another wavelength/radius grid.");
             return nullptr;
         }
         std::vector<float> rm;
-        if (v.refMode == ReferenceMode::ScanByScan) {
+        if (radial) {
+            if (scan >= ref->scans.size()) {
+                error = tr("The reference has only %1 scans.").arg(ref->scans.size());
+                return nullptr;
+            }
+            std::vector<float> one;
+            if (ref == &src) {
+                one = m;  // already dark-adjusted
+            } else {
+                if (auc::IoResult r = ref->scanMatrix(scan, one); !r.ok()) {
+                    error = r.message;
+                    return nullptr;
+                }
+                adjustDark(one, *ref);
+            }
+            // I0 per wavelength: mean over the region, broadcast over the sample's radius grid.
+            rm.resize(nwl * np);
+            for (std::size_t k = 0; k < nwl; ++k) {
+                const double i0 = auc::proc::windowMean(std::span<const float>(one).subspan(k * rnp, rnp), ref->radius,
+                                                        v.refR1, v.refR2);
+                if (std::isnan(i0)) {
+                    error = tr("Reference: no radius points in the reference region");
+                    return nullptr;
+                }
+                std::fill_n(rm.begin() + std::ptrdiff_t(k * np), np, float(i0));
+            }
+        } else if (v.refMode == ReferenceMode::ScanByScan) {
             if (scan >= ref->scans.size()) {
                 error = tr("The reference has only %1 scans.").arg(ref->scans.size());
                 return nullptr;
@@ -962,7 +1040,7 @@ SurfaceGridPtr AppController::computeSurface(const Job& job, const auc::Dataset&
             rm.resize(sum.size());
             for (std::size_t q = 0; q < sum.size(); ++q) rm[q] = float(sum[q] / double(std::max<std::size_t>(count, 1)));
         }
-        adjustDark(rm, *ref);
+        if (!radial) adjustDark(rm, *ref);
         std::vector<float> a(nwl * np);
         for (std::size_t k = 0; k < nwl; ++k)
             auc::proc::absorbance(std::span<const float>(m).subspan(k * np, np), std::span<const float>(rm).subspan(k * np, np),
