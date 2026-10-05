@@ -199,11 +199,32 @@ QString AppController::channelTitle(const auc::ChannelSource& c)
 
 QVariantList AppController::channels() const
 {
+    // Common parent directory of all folders: groups are shown relative to it.
+    QStringList root;
+    bool first = true;
+    for (const Entry& e : m_entries) {
+        const QStringList parts = QDir::cleanPath(e.src->folder).split(QLatin1Char('/'));
+        if (first) {
+            root = parts;
+            first = false;
+            continue;
+        }
+        qsizetype n = 0;
+        while (n < root.size() && n < parts.size() && root[n] == parts[n]) ++n;
+        root = root.mid(0, n);
+    }
     QVariantList list;
     for (const Entry& e : m_entries) {
         const auto& c = *e.src;
         QVariantMap m;
         m.insert(QStringLiteral("title"), channelTitle(c));
+        m.insert(QStringLiteral("cell"), c.cell);
+        m.insert(QStringLiteral("channel"), QString(QLatin1Char(c.channel)));
+        const QStringList parts = QDir::cleanPath(c.folder).split(QLatin1Char('/'));
+        QString group = parts.mid(root.size()).join(QLatin1Char('/'));
+        if (group.isEmpty() && !parts.isEmpty()) group = parts.last();  // all in one folder
+        m.insert(QStringLiteral("group"), group);
+        m.insert(QStringLiteral("folder"), c.folder);
         m.insert(QStringLiteral("run"), c.runId);
         m.insert(QStringLiteral("description"), c.description);
         QStringList parts;
