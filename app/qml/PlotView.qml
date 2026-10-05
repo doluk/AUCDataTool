@@ -199,7 +199,10 @@ Item {
         onPressed: (e) => {
             last = Qt.point(e.x, e.y)
             start = last
-            if (e.button === Qt.RightButton) startBand(e.x, e.y)
+            // Right-drag or Ctrl+left-drag (Cmd on macOS): zoom box instead of pan.
+            if (e.button === Qt.RightButton
+                    || (e.button === Qt.LeftButton && (e.modifiers & Qt.ControlModifier)))
+                startBand(e.x, e.y)
         }
         // Touch has no right button: long press, then drag the zoom box.
         onPressAndHold: (e) => { if (root.touchUi && !band.visible) startBand(e.x, e.y) }
