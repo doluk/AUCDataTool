@@ -220,9 +220,9 @@ QVariantList AppController::channels() const
         m.insert(QStringLiteral("title"), channelTitle(c));
         m.insert(QStringLiteral("cell"), c.cell);
         m.insert(QStringLiteral("channel"), QString(QLatin1Char(c.channel)));
-        const QStringList parts = QDir::cleanPath(c.folder).split(QLatin1Char('/'));
-        QString group = parts.mid(root.size()).join(QLatin1Char('/'));
-        if (group.isEmpty() && !parts.isEmpty()) group = parts.last();  // all in one folder
+        const QStringList dirs = QDir::cleanPath(c.folder).split(QLatin1Char('/'));
+        QString group = dirs.mid(root.size()).join(QLatin1Char('/'));
+        if (group.isEmpty() && !dirs.isEmpty()) group = dirs.last();  // all in one folder
         m.insert(QStringLiteral("group"), group);
         m.insert(QStringLiteral("folder"), c.folder);
         m.insert(QStringLiteral("run"), c.runId);
