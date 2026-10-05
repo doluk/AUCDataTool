@@ -270,6 +270,12 @@ void ScanPlot::setSeries(PlotSeriesPtr series, bool keepView)
     const bool hadData = hasData();
     m_series = std::move(series);
     m_dataDirty = m_styledDirty = true;
+    ++m_styleRevision;
+    m_idIndex.clear();
+    if (m_series) {
+        m_idIndex.reserve(qsizetype(m_series->ids.size()));
+        for (std::size_t c = 0; c < m_series->ids.size(); ++c) m_idIndex.insert(m_series->ids[c], int(c));
+    }
     m_xOrder = 0;
     if (m_series && m_series->x.size() > 1) {
         const auto& x = m_series->x;
@@ -322,8 +328,7 @@ int ScanPlot::curveIndex(int id) const
 {
     if (!m_series) return -1;
     if (m_series->ids.empty()) return id >= 0 && std::size_t(id) < m_series->y.size() ? id : -1;
-    const auto it = std::find(m_series->ids.begin(), m_series->ids.end(), id);
-    return it == m_series->ids.end() ? -1 : int(it - m_series->ids.begin());
+    return m_idIndex.value(id, -1);
 }
 
 CurveStyle ScanPlot::resolvedStyle(std::size_t c) const
@@ -337,6 +342,7 @@ CurveStyle ScanPlot::resolvedStyle(std::size_t c) const
 void ScanPlot::stylesEdited()
 {
     m_dataDirty = m_styledDirty = true;
+    ++m_styleRevision;
     emit stylesChanged();
     update();
 }
@@ -349,23 +355,24 @@ void ScanPlot::setSelectedCurve(int id)
     stylesEdited();
 }
 
-QVariantList ScanPlot::curves() const
+bool ScanPlot::hasCustomStyles() const
 {
-    QVariantList list;
-    if (!m_series) return list;
-    list.reserve(qsizetype(m_series->y.size()));
-    for (std::size_t c = 0; c < m_series->y.size(); ++c) {
-        const CurveStyle s = resolvedStyle(c);
-        const int id = curveId(c);
-        list.push_back(QVariantMap{
-            {QStringLiteral("id"), id},
-            {QStringLiteral("label"), c < m_series->labels.size() ? m_series->labels[c]
-                                                                  : tr("Curve %1").arg(c + 1)},
-            {QStringLiteral("color"), s.color},
-            {QStringLiteral("custom"), m_overrides.contains(id)},
-            {QStringLiteral("visible"), s.visible}});
-    }
-    return list;
+    for (auto it = m_overrides.cbegin(); it != m_overrides.cend(); ++it)
+        if (curveIndex(it.key()) >= 0) return true;
+    return false;
+}
+
+QVariantMap ScanPlot::curveInfo(int index) const
+{
+    if (!m_series || index < 0 || std::size_t(index) >= m_series->y.size()) return {};
+    const std::size_t c = std::size_t(index);
+    const CurveStyle s = resolvedStyle(c);
+    const int id = curveId(c);
+    return QVariantMap{{QStringLiteral("id"), id},
+                       {QStringLiteral("label"), c < m_series->labels.size() ? m_series->labels[c] : tr("Curve %1").arg(c + 1)},
+                       {QStringLiteral("color"), s.color},
+                       {QStringLiteral("custom"), m_overrides.contains(id)},
+                       {QStringLiteral("visible"), s.visible}};
 }
 
 QVariantMap ScanPlot::selectedStyle() const

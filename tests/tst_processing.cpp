@@ -4,8 +4,10 @@
 
 #include <QTest>
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <utility>
 
 using namespace auc;
 using namespace auc::proc;
@@ -160,6 +162,23 @@ private slots:
         // A single spike is removed.
         const auto w = medianFilter(std::vector<float>{1, 1, 1, 50, 1, 1}, 2, 0);
         QCOMPARE(w[3], 1.f);
+    }
+
+    void medianThreePointMatchesSort()
+    {
+        // The three-point fast path agrees with a sorted window for both rank splits.
+        std::vector<float> x(200);
+        unsigned seed = 7;
+        for (float& v : x) v = float((seed = seed * 1103515245u + 12345u) >> 16 & 0xff) - 100.f;
+        for (const auto& [left, right] : {std::pair{2, 0}, std::pair{1, 1}, std::pair{0, 2}}) {
+            const auto y = medianFilter(x, left, right);
+            for (int i = 0; i < int(x.size()); ++i) {
+                std::vector<float> w;
+                for (int k = i - left; k <= i + right; ++k) w.push_back(k >= 0 && k < int(x.size()) ? x[std::size_t(k)] : 0.f);
+                std::sort(w.begin(), w.end());
+                QCOMPARE(y[std::size_t(i)], w[1]);
+            }
+        }
     }
 
     void selection()

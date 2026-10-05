@@ -105,6 +105,10 @@ protected:
     /// storing one file per scan override it.
     using MatrixFn = std::function<void(std::size_t, std::span<const float>)>;
     virtual IoResult readScanMatrices(std::span<const std::size_t> scans, const MatrixFn& fn) const;
+    /// Calls fn(i, window) for every scan with its readings at the radius points
+    /// [firstPoint, firstPoint+count) of all wavelengths, wavelength-major:
+    /// window[k·count + j]. The default extracts them from readScanMatrices().
+    virtual IoResult readPointWindows(std::size_t firstPoint, std::size_t count, const MatrixFn& fn) const;
     Dataset emptyDataset(double wavelength) const;
 
 private:

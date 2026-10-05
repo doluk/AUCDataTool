@@ -39,8 +39,12 @@ class ScanPlot : public QQuickItem {
     Q_PROPERTY(bool showGrid READ showGrid WRITE setShowGrid NOTIFY showGridChanged)
     /// Curve styling. Curves are addressed by id (PlotSeries::ids, i.e. the scan index).
     Q_PROPERTY(int selectedCurve READ selectedCurve WRITE setSelectedCurve NOTIFY stylesChanged)
-    /// [{ id, label, color, custom, visible }] for every curve of the current series.
-    Q_PROPERTY(QVariantList curves READ curves NOTIFY stylesChanged)
+    /// Index of the selected curve in the current series, −1 if none.
+    Q_PROPERTY(int selectedIndex READ selectedIndex NOTIFY stylesChanged)
+    /// True if any curve of the current series has an individual style.
+    Q_PROPERTY(bool hasCustomStyles READ hasCustomStyles NOTIFY stylesChanged)
+    /// Incremented on every data or style change; bindings calling curveInfo() depend on it.
+    Q_PROPERTY(int styleRevision READ styleRevision NOTIFY stylesChanged)
     /// Resolved style of the selected curve (empty map if none).
     Q_PROPERTY(QVariantMap selectedStyle READ selectedStyle NOTIFY stylesChanged)
     /// Style used by curves without an individual style (its colour is ignored: colormap).
@@ -68,7 +72,13 @@ public:
 
     int selectedCurve() const { return m_selected; }
     void setSelectedCurve(int id);
-    QVariantList curves() const;
+    int selectedIndex() const { return curveIndex(m_selected); }
+    bool hasCustomStyles() const;
+    int styleRevision() const { return m_styleRevision; }
+    /// { id, label, color, custom, visible } of the curve at `index`. Per row instead of one
+    /// list for all curves: building and converting a list of every curve on each change
+    /// cost O(curves) per list row, i.e. seconds for runs with > 1000 scans.
+    Q_INVOKABLE QVariantMap curveInfo(int index) const;
     QVariantMap selectedStyle() const;
     QVariantMap defaultStyleMap() const { return m_defaultStyle.toMap(); }
     void setDefaultStyleMap(const QVariantMap& changes);
@@ -130,6 +140,8 @@ private:
     CurveStyle m_defaultStyle;
     QHash<int, CurveStyle> m_overrides;
     int m_selected = -1;
+    int m_styleRevision = 0;
+    QHash<int, int> m_idIndex;  ///< curve id → index in the series
     /// Pixel-space triangles of styled curves, filled on the render thread.
     std::vector<QSGGeometry::ColoredPoint2D> m_styledVertices;
 };
