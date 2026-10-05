@@ -301,7 +301,7 @@ ApplicationWindow {
                 yLabel: ctrl.yLabel
                 placeholder: ctrl.processingError !== "" ? ctrl.processingError
                              : win.compact ? qsTr("Open files or a data folder from the menu (top right).\nDrag: pan · Pinch: zoom · Long press + drag: zoom box\nDouble tap: autoscale · Tap: select curve")
-                             : qsTr("Open .auc/.mwrs/.mw/XL files or a data folder.\nWheel: zoom · Drag: pan · Right-drag: zoom box · Double-click/F1: autoscale · Click: select curve\nCtrl+←/→: previous/next wavelength")
+                             : qsTr("Open .auc/.mwrs/.mw/XL files or a data folder.\nWheel: zoom · Drag: pan · Right-drag/Ctrl+drag: zoom box · Double-click/F1: autoscale · Click: select curve\nCtrl+←/→: previous/next wavelength")
                 markers: {
                     var m = []
                     if (ctrl.offsetMode === 1)

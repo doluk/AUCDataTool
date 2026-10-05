@@ -8,7 +8,8 @@ import Auc.DataTool
 
 // 3D surface: the scans at the current wavelength as a radius × time surface, or radius ×
 // wavelength of one scan.
-// Drag rotates, wheel zooms, click shows the value under the cursor.
+// Left-drag (or one-finger drag) rotates, wheel/pinch zooms, click/tap shows the value under
+// the cursor.
 Item {
     id: root
     required property var controller
@@ -111,6 +112,10 @@ Item {
             aspectRatio: 1.6
             horizontalAspectRatio: 1.0
 
+            // The built-in handler rotates on right-drag only, which touch screens lack.
+            // Rotation is done by rotateHandler (rotateArea) instead.
+            Component.onCompleted: unsetDefaultDragHandler()
+
             theme: GraphsTheme {
                 colorScheme: root.palette.window.hslLightness < 0.5 ? GraphsTheme.ColorScheme.Dark : GraphsTheme.ColorScheme.Light
                 backgroundColor: root.palette.base
@@ -161,6 +166,36 @@ Item {
                     GradientStop { position: 0.75; color: "#5ec962" }
                     GradientStop { position: 1.0; color: "#fde725" }
                 }
+            }
+        }
+    }
+
+    // On top of the graph: a DragHandler can't be declared inside Surface3D (its default
+    // property is the series list). Press, tap, wheel and pinch still reach the graph.
+    Item {
+        id: rotateArea
+        x: graph.x
+        y: graph.y
+        width: graph.width
+        height: graph.height
+
+        DragHandler {
+            id: rotateHandler
+            target: null
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            maximumPointCount: 1  // two fingers: pinch zoom
+            // Win over the built-in drag handler, which also grabs touch points.
+            grabPermissions: PointerHandler.CanTakeOverFromAnything
+            readonly property real degreesPerPixel: 0.3
+            property vector2d last: Qt.vector2d(0, 0)
+            onActiveChanged: last = Qt.vector2d(0, 0)
+            onActiveTranslationChanged: {
+                if (!active)
+                    return
+                const d = activeTranslation.minus(last)
+                last = activeTranslation
+                graph.cameraXRotation += d.x * degreesPerPixel
+                graph.cameraYRotation += d.y * degreesPerPixel
             }
         }
     }
