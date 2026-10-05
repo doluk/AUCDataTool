@@ -63,7 +63,7 @@ void ChannelSource::clearCache() const
 {
     std::lock_guard lock(m_cacheMutex);
     m_cache.clear();
-    m_spectra.reset();
+    m_spectra.clear();
 }
 
 IoResult ChannelSource::readScanMatrices(std::span<const std::size_t> scanIdx, const MatrixFn& fn) const
@@ -73,6 +73,22 @@ IoResult ChannelSource::readScanMatrices(std::span<const std::size_t> scanIdx, c
     for (std::size_t i : scanIdx)
         if (i < rows.size()) fn(i, rows[i]);
     return {};
+}
+
+IoResult ChannelSource::readPointWindows(std::size_t firstPoint, std::size_t count, const MatrixFn& fn) const
+{
+    const std::size_t np = radius.size(), nwl = wavelengths.size();
+    std::vector<std::size_t> all(scans.size());
+    std::iota(all.begin(), all.end(), std::size_t(0));
+    std::vector<float> w(nwl * count);
+    return readScanMatrices(all, [&](std::size_t i, std::span<const float> m) {
+        for (std::size_t k = 0; k < nwl; ++k)
+            for (std::size_t j = 0; j < count; ++j) {
+                const std::size_t q = k * np + firstPoint + j;
+                w[k * count + j] = q < m.size() ? m[q] : std::numeric_limits<float>::quiet_NaN();
+            }
+        fn(i, w);
+    });
 }
 
 IoResult ChannelSource::scanMatrix(std::size_t scan, std::vector<float>& out) const
@@ -94,9 +110,12 @@ IoResult ChannelSource::spectra(std::size_t firstPoint, std::size_t count, std::
     count = std::clamp<std::size_t>(count, 1, np - firstPoint);
     {
         std::lock_guard lock(m_cacheMutex);
-        if (m_spectra && m_spectraFirst == firstPoint && m_spectraCount == count) {
-            out = m_spectra;
-            return {};
+        for (auto it = m_spectra.begin(); it != m_spectra.end(); ++it) {
+            if (it->first == firstPoint && it->count == count) {
+                m_spectra.splice(m_spectra.begin(), m_spectra, it);
+                out = m_spectra.front().data;
+                return {};
+            }
         }
     }
     const std::size_t nwl = wavelengths.size();
@@ -110,15 +129,13 @@ IoResult ChannelSource::spectra(std::size_t firstPoint, std::size_t count, std::
         s.wavelength = 0.0;
         s.deltaR = nwl > 1 ? wavelengths[1] - wavelengths[0] : 0.0;
     }
-    std::vector<std::size_t> all(scans.size());
-    std::iota(all.begin(), all.end(), std::size_t(0));
-    const IoResult res = readScanMatrices(all, [&](std::size_t i, std::span<const float> m) {
+    const IoResult res = readPointWindows(firstPoint, count, [&](std::size_t i, std::span<const float> w) {
         auto& v = d->scans[i].values;
         for (std::size_t k = 0; k < nwl; ++k) {
             double sum = 0.0;
             int n = 0;
-            for (std::size_t j = firstPoint; j < firstPoint + count && k * np + j < m.size(); ++j) {
-                const float x = m[k * np + j];
+            for (std::size_t j = 0; j < count && k * count + j < w.size(); ++j) {
+                const float x = w[k * count + j];
                 if (std::isfinite(x)) sum += x, ++n;
             }
             if (n) v[k] = float(sum / n);
@@ -128,9 +145,8 @@ IoResult ChannelSource::spectra(std::size_t firstPoint, std::size_t count, std::
     // The spectra's "wavelength" field records the radius they were taken at.
     for (auto& s : d->scans) s.wavelength = r;
     std::lock_guard lock(m_cacheMutex);
-    m_spectra = d;
-    m_spectraFirst = firstPoint;
-    m_spectraCount = count;
+    m_spectra.push_front({firstPoint, count, d});
+    if (m_spectra.size() > kSpectraCacheSize) m_spectra.pop_back();
     out = std::move(d);
     return {};
 }
@@ -194,6 +210,25 @@ struct ScanFile {
     QString path;
     mwl::ScanHeader header;
 };
+
+/// Reads and parses the header of an .mwrs/.mw scan file. Only the first 4 KiB are read
+/// when they suffice (a scan file of a large run holds megabytes of readings, and a run
+/// has thousands of files); layouts that are told apart by trying several parsers fall
+/// back to the full probe so that the result does not depend on the probe size.
+IoResult readMwlHeader(QFile& f, bool mwrs, const mwl::MwrsRunInfo& run, mwl::ScanHeader& h)
+{
+    constexpr qint64 kSmallProbe = 4096;
+    auto parse = [&](const QByteArray& head) {
+        return mwrs ? mwl::parseMwrsHeader(head, f.size(), run, h) : mwl::parseMwHeader(head, f.size(), h);
+    };
+    const QByteArray small = f.read(kSmallProbe);
+    if (small.size() < kSmallProbe) return parse(small);  // whole file
+    // .mwrs ≥ 1.1 has one layout; .mw 1.2 is tried before 1.0/1.1, so its success is final.
+    if (const IoResult r = parse(small); r.ok() && (mwrs ? run.version >= 1.05 : h.variant == QLatin1String("mw 1.2")))
+        return r;
+    if (!f.seek(0)) return {IoResult::CannotOpen, f.errorString()};
+    return parse(f.read(mwl::kHeaderProbeBytes));
+}
 
 class MwlChannel final : public ChannelSource {
 public:
@@ -291,9 +326,7 @@ public:
     {
         QFile f(path);
         if (!f.open(QIODevice::ReadOnly)) return {IoResult::CannotOpen, f.errorString()};
-        const QByteArray head = f.read(mwl::kHeaderProbeBytes);
-        return format == SourceFormat::Mwrs ? mwl::parseMwrsHeader(head, f.size(), run, h)
-                                            : mwl::parseMwHeader(head, f.size(), h);
+        return readMwlHeader(f, format == SourceFormat::Mwrs, run, h);
     }
 
 protected:
@@ -336,6 +369,31 @@ protected:
                 return {IoResult::NotAucFile, QStringLiteral("%1: truncated").arg(QFileInfo(sf.path).fileName())};
             mwl::decodeValues(buf.constData(), n, h.valueBytes, h.valueType, h.scale, m.data());
             fn(i, m);
+        }
+        return {};
+    }
+
+    IoResult readPointWindows(std::size_t firstPoint, std::size_t count, const MatrixFn& fn) const override
+    {
+        // Spectra need `count` points of each wavelength row. The file is mapped and only
+        // those values are decoded, instead of reading and decoding every scan completely.
+        const std::size_t np = radius.size(), nwl = wavelengths.size();
+        std::vector<float> w(nwl * count);
+        for (std::size_t i = 0; i < scanFiles.size(); ++i) {
+            const auto& sf = scanFiles[i];
+            const auto& h = sf.header;
+            QFile f(sf.path);
+            if (!f.open(QIODevice::ReadOnly)) return {IoResult::CannotOpen, f.errorString()};
+            const qint64 bytes = qint64(nwl * np) * h.valueBytes;
+            if (f.size() < h.dataOffset + bytes)
+                return {IoResult::NotAucFile, QStringLiteral("%1: truncated").arg(QFileInfo(sf.path).fileName())};
+            const uchar* p = f.map(h.dataOffset, bytes);
+            if (!p) return ChannelSource::readPointWindows(firstPoint, count, fn);  // e.g. Android content URIs
+            for (std::size_t k = 0; k < nwl; ++k)
+                mwl::decodeValues(reinterpret_cast<const char*>(p) + (k * np + firstPoint) * std::size_t(h.valueBytes), count,
+                                  h.valueBytes, h.valueType, h.scale, w.data() + k * count);
+            f.unmap(const_cast<uchar*>(p));
+            fn(i, w);
         }
         return {};
     }
@@ -609,8 +667,7 @@ OpenResult openData(const QStringList& paths)
                 continue;
             }
             mwl::ScanHeader h;
-            const QByteArray head = f.read(mwl::kHeaderProbeBytes);
-            const IoResult r = isMwrs ? mwl::parseMwrsHeader(head, f.size(), run, h) : mwl::parseMwHeader(head, f.size(), h);
+            const IoResult r = readMwlHeader(f, isMwrs, run, h);
             if (!r.ok()) {
                 res.warnings << QStringLiteral("%1: %2").arg(fi.fileName(), r.message);
                 continue;

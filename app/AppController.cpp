@@ -649,6 +649,7 @@ AppController::Result AppController::runProcessing(Job job)
     Result res;
     res.generation = job.generation;
     res.keepView = job.keepView;
+    res.spectrumDeferred = job.spectrumDeferred;
     const auc::ChannelSource& src = *job.src;
     const ChannelSettings& v = job.view;
     QStringList warnings;
@@ -1081,7 +1082,10 @@ AppController::Job AppController::makeJob(const Entry& e) const
     job.view = e.view;
     if (e.view.reference >= 0 && e.view.reference < m_entries.size()) job.ref = m_entries[e.view.reference].src;
     job.opt = currentOptions();
-    job.opt.spectrum = job.opt.spectrum && m_spectrumPlot;
+    // The spectra plot is hidden behind the 3D tab; reading every scan for it there only
+    // delays the surface. setSurfaceActive(false) reprocesses to fill it again.
+    job.spectrumDeferred = job.opt.spectrum && m_spectrumPlot && m_surfaceActive;
+    job.opt.spectrum = job.opt.spectrum && m_spectrumPlot && !m_surfaceActive;
     job.ti = e.ti;
     job.ri = e.ri;
     job.surface = m_surfaceActive;
@@ -1131,7 +1135,7 @@ void AppController::onProcessed()
     m_processed = r.processed;
     if (m_scanPlot) m_scanPlot->setSeries(r.scans, r.keepView);
     if (m_integralPlot) m_integralPlot->setSeries(r.integral, false);
-    if (m_spectrumPlot) {
+    if (m_spectrumPlot && !r.spectrumDeferred) {
         const QString key = spectrumKey();
         m_spectrumPlot->setSeries(r.spectrum, key == m_lastSpectrumKey && m_spectrumPlot->hasData());
         m_lastSpectrumKey = r.spectrum ? key : QString();
@@ -1286,7 +1290,7 @@ void AppController::setSurfaceActive(bool on)
     if (on == m_surfaceActive) return;
     m_surfaceActive = on;
     emit surfaceSettingsChanged();
-    if (on) reprocess(true);
+    if (on || m_optSpectrum) reprocess(true);
 }
 
 void AppController::setSurfaceMode(int m)

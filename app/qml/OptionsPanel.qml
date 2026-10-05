@@ -525,7 +525,7 @@ ColumnLayout {
                 Button {
                     text: qsTr("Reset all")
                     flat: true
-                    enabled: root.plot.curves.some(c => c.custom)
+                    enabled: root.plot.hasCustomStyles
                     onClicked: root.plot.resetCurveStyles()
                 }
             }
@@ -534,14 +534,14 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 170
                 clip: true
-                // Count as model: `curves` is rebuilt on every style edit and an array model
-                // would recreate all rows and lose the scroll position.
-                model: root.plot.curves.length
+                // Count as model, rows fetch their curve: an array model would recreate all
+                // rows on every style edit and lose the scroll position.
+                model: root.plot.curveCount
                 ScrollBar.vertical: ScrollBar {}
                 delegate: ItemDelegate {
                     id: row
                     required property int index
-                    readonly property var curve: root.plot.curves[index] ?? ({})
+                    readonly property var curve: { root.plot.styleRevision; return root.plot.curveInfo(index) }
                     width: ListView.view.width
                     height: 26
                     padding: 2
@@ -571,7 +571,7 @@ ColumnLayout {
                 Connections {
                     target: root.plot
                     function onStylesChanged() {
-                        const i = root.plot.curves.findIndex(c => c.id === root.plot.selectedCurve)
+                        const i = root.plot.selectedIndex
                         if (i >= 0) curveList.positionViewAtIndex(i, ListView.Contain)
                     }
                 }
@@ -581,10 +581,7 @@ ColumnLayout {
                 visible: root.plot.selectedCurve >= 0
                 Layout.fillWidth: true
                 Label {
-                    text: {
-                        const c = root.plot.curves.find(c => c.id === root.plot.selectedCurve)
-                        return c ? c.label : ""
-                    }
+                    text: root.plot.curveInfo(root.plot.selectedIndex).label ?? ""
                     font.bold: true
                 }
                 StyleEditor {

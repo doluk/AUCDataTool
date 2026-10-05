@@ -325,6 +325,7 @@ private:
         bool surfaceOmega2t = false;
         int surfaceScan = -1;
         bool plots = true;  ///< false: only the processed dataset (export)
+        bool spectrumDeferred = false;  ///< spectra skipped while hidden (3D tab); keep the plot
         QString yLabel;     ///< value axis title (surface)
     };
     struct Result {
@@ -336,6 +337,7 @@ private:
         std::vector<int> scanIds;  ///< source scan index of each processed scan
         double ms = 0.0;
         bool keepView = false;
+        bool spectrumDeferred = false;
         QString error;      ///< processing could not run (nothing shown)
         QString warning;    ///< ran, but something was skipped (noise, scans)
     };

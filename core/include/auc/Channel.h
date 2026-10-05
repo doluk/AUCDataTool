@@ -88,7 +88,7 @@ public:
 
     /// Spectra: for every scan the readings at all wavelengths, averaged over the radius
     /// points [firstPoint, firstPoint+count). Returned as a Dataset whose `radius` holds
-    /// the wavelengths (nm). Reads every scan completely; cached for the last window.
+    /// the wavelengths (nm). Reads every scan; cached for the last two windows.
     IoResult spectra(std::size_t firstPoint, std::size_t count, std::shared_ptr<const Dataset>& out) const;
 
     /// Re-reads headers after files were added or rewritten (live mode). Returns true if
@@ -105,6 +105,10 @@ protected:
     /// storing one file per scan override it.
     using MatrixFn = std::function<void(std::size_t, std::span<const float>)>;
     virtual IoResult readScanMatrices(std::span<const std::size_t> scans, const MatrixFn& fn) const;
+    /// Calls fn(i, window) for every scan with its readings at the radius points
+    /// [firstPoint, firstPoint+count) of all wavelengths, wavelength-major:
+    /// window[k·count + j]. The default extracts them from readScanMatrices().
+    virtual IoResult readPointWindows(std::size_t firstPoint, std::size_t count, const MatrixFn& fn) const;
     Dataset emptyDataset(double wavelength) const;
 
 private:
@@ -115,8 +119,11 @@ private:
     mutable std::mutex m_cacheMutex;
     mutable std::list<CacheEntry> m_cache;  ///< most recent first
     static constexpr std::size_t kCacheSize = 6;
-    mutable std::size_t m_spectraFirst = 0, m_spectraCount = 0;
-    mutable std::shared_ptr<const Dataset> m_spectra;
+    /// Spectra of the last windows (the display window and, for a radial-area reference
+    /// on the same channel, the I0 region – one entry would alternate between them and
+    /// re-read every scan file twice per update).
+    mutable std::list<CacheEntry> m_spectra;  ///< most recent first
+    static constexpr std::size_t kSpectraCacheSize = 2;
 };
 
 using ChannelPtr = std::shared_ptr<ChannelSource>;
