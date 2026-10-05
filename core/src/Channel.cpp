@@ -63,7 +63,7 @@ void ChannelSource::clearCache() const
 {
     std::lock_guard lock(m_cacheMutex);
     m_cache.clear();
-    m_spectra.reset();
+    m_spectra.clear();
 }
 
 IoResult ChannelSource::readScanMatrices(std::span<const std::size_t> scanIdx, const MatrixFn& fn) const
@@ -110,9 +110,12 @@ IoResult ChannelSource::spectra(std::size_t firstPoint, std::size_t count, std::
     count = std::clamp<std::size_t>(count, 1, np - firstPoint);
     {
         std::lock_guard lock(m_cacheMutex);
-        if (m_spectra && m_spectraFirst == firstPoint && m_spectraCount == count) {
-            out = m_spectra;
-            return {};
+        for (auto it = m_spectra.begin(); it != m_spectra.end(); ++it) {
+            if (it->first == firstPoint && it->count == count) {
+                m_spectra.splice(m_spectra.begin(), m_spectra, it);
+                out = m_spectra.front().data;
+                return {};
+            }
         }
     }
     const std::size_t nwl = wavelengths.size();
@@ -142,9 +145,8 @@ IoResult ChannelSource::spectra(std::size_t firstPoint, std::size_t count, std::
     // The spectra's "wavelength" field records the radius they were taken at.
     for (auto& s : d->scans) s.wavelength = r;
     std::lock_guard lock(m_cacheMutex);
-    m_spectra = d;
-    m_spectraFirst = firstPoint;
-    m_spectraCount = count;
+    m_spectra.push_front({firstPoint, count, d});
+    if (m_spectra.size() > kSpectraCacheSize) m_spectra.pop_back();
     out = std::move(d);
     return {};
 }
