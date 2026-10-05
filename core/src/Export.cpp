@@ -19,6 +19,7 @@ IoResult fail(IoResult::Code c, const QString& msg) { return {c, msg}; }
 IoResult saveBytes(const QString& path, const QByteArray& bytes)
 {
     QSaveFile f(path);
+    f.setDirectWriteFallback(true);  // e.g. Android content:// URIs: no temporary file next to the target
     if (!f.open(QIODevice::WriteOnly)) return fail(IoResult::WriteFailed, QStringLiteral("%1: %2").arg(path, f.errorString()));
     f.write(bytes);
     if (!f.commit()) return fail(IoResult::WriteFailed, QStringLiteral("%1: %2").arg(path, f.errorString()));

@@ -25,8 +25,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(AUC_BUILD_APP   "Build the Qt Quick application" ON)
-option(AUC_BUILD_TESTS "Build unit tests"               ON)
-option(AUC_BUILD_TOOLS "Build command-line tools"       ON)
+if(ANDROID)
+    set(_auc_host_default OFF)  # tests and tools cannot run on the build host
+else()
+    set(_auc_host_default ON)
+endif()
+option(AUC_BUILD_TESTS "Build unit tests"               ${_auc_host_default})
+option(AUC_BUILD_TOOLS "Build command-line tools"       ${_auc_host_default})
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core)
 qt_standard_project_setup(REQUIRES 6.8)
@@ -41,7 +46,9 @@ add_subdirectory(core)
 
 if(AUC_BUILD_APP)
     add_subdirectory(app)
-    include(cmake/Packaging.cmake)
+    if(NOT ANDROID)
+        include(cmake/Packaging.cmake)
+    endif()
 endif()
 
 if(AUC_BUILD_TOOLS)

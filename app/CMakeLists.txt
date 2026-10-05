@@ -33,6 +33,7 @@ set(auc_qml_files
     qml/ColorBar.qml
     qml/ExportDialog.qml
     qml/RunConditionsView.qml
+    qml/IconButton.qml
 )
 set(auc_sources
     AppController.h AppController.cpp
@@ -80,6 +81,20 @@ set_target_properties(aucdatatool PROPERTIES
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
 )
+
+# Android: an APK via `cmake --build build --target apk` with Qt for Android (qt-cmake).
+# QT_ANDROID_VERSION_CODE must increase with every published release.
+set_target_properties(aucdatatool PROPERTIES
+    QT_ANDROID_PACKAGE_NAME de.unikonstanz.coelfen.aucdatatool
+    QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
+    QT_ANDROID_VERSION_NAME ${PROJECT_VERSION}
+    QT_ANDROID_VERSION_CODE 1
+    QT_ANDROID_MIN_SDK_VERSION 28
+    QT_ANDROID_TARGET_SDK_VERSION 34
+)
+if(ANDROID)
+    return()  # no install rules or Qt deployment, androiddeployqt bundles Qt into the APK
+endif()
 
 # vcpkg's applocal step copies only the DLLs the executable links directly, not
 # the Qt plugins, QML modules or their dependencies, and vcpkg's Qt looks for

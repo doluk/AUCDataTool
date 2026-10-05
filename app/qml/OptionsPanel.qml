@@ -10,6 +10,8 @@ ColumnLayout {
     property var controller
     property var plot
     readonly property bool hasData: controller.scanCount > 0
+    /// Narrow (phone drawer): wide rows wrap into two columns.
+    property bool compact: false
     spacing: 10
 
     // Numeric entry bound to a controller property; commits on Enter/focus loss.
@@ -20,6 +22,7 @@ ColumnLayout {
         signal committed(real v)
         text: value.toFixed(decimals)
         validator: DoubleValidator { locale: "C" }
+        inputMethodHints: Qt.ImhFormattedNumbersOnly
         horizontalAlignment: Text.AlignRight
         selectByMouse: true
         onEditingFinished: committed(Number(text))
@@ -251,7 +254,7 @@ ColumnLayout {
                 onActivated: (i) => root.controller.referenceMode = i
             }
             GridLayout {
-                columns: 4
+                columns: root.compact ? 2 : 4
                 visible: !root.controller.dataIsAbsorbance && root.controller.referenceChoice > 0
                          && root.controller.referenceMode === 1
                 Layout.fillWidth: true
@@ -319,7 +322,7 @@ ColumnLayout {
         id: noiseDialog
         property bool ti: true
         title: ti ? qsTr("Load time-invariant (TI) noise") : qsTr("Load radially invariant (RI) noise")
-        nameFilters: [qsTr("Noise files (*.xml *.txt *.csv *.dat)"), qsTr("All files (*)")]
+        nameFilters: Qt.platform.os === "android" ? [] : [qsTr("Noise files (*.xml *.txt *.csv *.dat)"), qsTr("All files (*)")]
         onAccepted: root.controller.loadNoise(selectedFile, ti)
     }
 

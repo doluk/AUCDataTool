@@ -19,6 +19,11 @@
 #include <QQuickWindow>
 #include <QTimer>
 
+#ifdef Q_OS_ANDROID
+#include <QJniEnvironment>
+#include <QJniObject>
+#endif
+
 #include <cmath>
 #include <cstdio>
 #include <random>
@@ -44,6 +49,36 @@ PlotSeriesPtr benchmarkSeries(int scans, int points)
     s->computeBounds();
     return s;
 }
+
+#ifdef Q_OS_ANDROID
+/// A run is a folder of scan files plus run XML; reading it needs file system access to
+/// shared storage, which a document picker grant (single URIs) does not give.
+/// Android 11+: "All files access" settings page; Android 9/10: storage runtime permission.
+void requestStorageAccess()
+{
+    QJniObject activity = QNativeInterface::QAndroidApplication::context();
+    if (!activity.isValid()) return;
+    if (QNativeInterface::QAndroidApplication::sdkVersion() >= 30) {
+        if (QJniObject::callStaticMethod<jboolean>("android/os/Environment", "isExternalStorageManager")) return;
+        const QJniObject pkg = activity.callObjectMethod("getPackageName", "()Ljava/lang/String;");
+        const QJniObject uri = QJniObject::callStaticObjectMethod(
+            "android/net/Uri", "parse", "(Ljava/lang/String;)Landroid/net/Uri;",
+            QJniObject::fromString(QStringLiteral("package:") + pkg.toString()).object<jstring>());
+        const QJniObject action = QJniObject::getStaticObjectField<jstring>(
+            "android/provider/Settings", "ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION");
+        const QJniObject intent("android/content/Intent", "(Ljava/lang/String;Landroid/net/Uri;)V",
+                                action.object<jstring>(), uri.object());
+        activity.callMethod<void>("startActivity", "(Landroid/content/Intent;)V", intent.object());
+    } else {
+        QJniEnvironment env;
+        const QJniObject perm = QJniObject::fromString(QStringLiteral("android.permission.READ_EXTERNAL_STORAGE"));
+        jobjectArray perms = env->NewObjectArray(1, env.findClass("java/lang/String"), perm.object<jstring>());
+        activity.callMethod<void>("requestPermissions", "([Ljava/lang/String;I)V", perms, jint(0));
+        env->DeleteLocalRef(perms);
+    }
+    QJniEnvironment().checkAndClearExceptions();
+}
+#endif
 
 }  // namespace
 
@@ -90,6 +125,7 @@ int main(int argc, char** argv)
 
 #ifdef Q_OS_ANDROID
     QQuickStyle::setStyle(QStringLiteral("Material"));
+    requestStorageAccess();
 #else
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) QQuickStyle::setStyle(QStringLiteral("Fusion"));
 #endif

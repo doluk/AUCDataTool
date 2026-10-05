@@ -3,7 +3,7 @@
 Cross-platform viewer for analytical ultracentrifugation (AUC) raw data — a C++/Qt 6
 reimplementation of the LabVIEW **AUC-Viewer 2.2.2** (AG Cölfen, Universität Konstanz).
 
-Targets Windows, macOS and Linux; the UI is Qt Quick so an Android build is possible.
+Targets Windows, macOS, Linux and Android (Qt Quick UI).
 
 ![AUCDataTool with a multi-wavelength run: 16 channels, 600 wavelengths, absorbance against the reference channel](docs/screenshot.png)
 
@@ -61,6 +61,35 @@ to `/opt/AUCDataTool`) and a relocatable `.tar.gz` (Linux; Linux deployment need
 An Arch Linux package built against system Qt comes from `cd packaging/arch && makepkg -s`.
 CI builds all of these for every push as
 workflow artifacts and attaches them to a GitHub release when a `v*` tag is pushed.
+
+### Android
+
+CI builds a signed APK for arm64-v8a (workflow artifact *AUCDataTool-Android*, attached to
+releases). Locally, with Qt 6.8 for Android (`android_arm64_v8a` plus the desktop Qt as host),
+Android SDK (platform 34), NDK r26b and JDK 17:
+
+```bash
+$QT_ANDROID/bin/qt-cmake -S . -B build-android -DCMAKE_BUILD_TYPE=Release \
+    -DQT_HOST_PATH=$QT_DESKTOP -DANDROID_SDK_ROOT=$ANDROID_SDK_ROOT -DANDROID_NDK_ROOT=$ANDROID_NDK_ROOT
+cmake --build build-android --target apk
+adb install build-android/app/android-build/build/outputs/apk/release/android-build-release-*.apk
+```
+
+Tools and tests are not built for Android. Release builds are signed with `-DQT_ANDROID_SIGN_APK=ON`
+and the `QT_ANDROID_KEYSTORE_PATH/_ALIAS/_STORE_PASS/_KEY_PASS` environment variables; CI uses
+the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` secrets if set,
+otherwise a temporary key (updates of such an APK need an uninstall first).
+
+**Phone layout** (window narrower than 1000 dp or lower than 520 dp, e.g. Galaxy S26):
+plots use the full screen; ☰ opens the channel list, the slider icon the options, ⋮ the
+actions (open, watch folder, export, save graph); the fit icon autoscales. In landscape the
+view tabs move into the toolbar. Touch: drag pans, pinch zooms, long press + drag draws a
+zoom box, double tap autoscales, tap selects a curve; markers have wider grips.
+
+On first start the app asks for *All files access* (Android ≥ 11; storage permission on 9/10):
+runs are folders of scan files plus `*.mwrs.xml` and are read in place. Files picked in
+the system dialog on internal storage or an SD card are mapped to their paths; files from other
+providers (e.g. cloud storage) can be opened individually, without folder grouping.
 
 ### Tools
 

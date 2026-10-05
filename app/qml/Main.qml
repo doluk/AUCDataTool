@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import Auc.DataTool
@@ -21,6 +22,13 @@ ApplicationWindow {
     /// 0 scans, 1 run conditions, 2 3D surface (main.cpp --view)
     property alias viewIndex: viewTabs.currentIndex
     property real lastProcessMs: 0
+    readonly property bool isAndroid: Qt.platform.os === "android"
+    /// Phone layout (e.g. 412 × 915 dp portrait, 915 × 412 landscape): plots use the full
+    /// window, channel list and options open as drawers, actions sit in a menu.
+    readonly property bool compact: width < 1000 || height < 520
+    /// Phone in landscape: tabs move into the toolbar and the status bar is hidden.
+    readonly property bool landscapePhone: compact && width > height
+    onCompactChanged: { channelDrawer.close(); optionsDrawer.close() }
 
     AppController {
         id: ctrl
@@ -34,6 +42,7 @@ ApplicationWindow {
         onProcessed: (ms) => win.lastProcessMs = ms
         // --set surfaceActive=true on the command line opens the tab.
         onSurfaceSettingsChanged: if (surfaceActive && surfaceSupported) viewTabs.currentIndex = 2
+        onCurrentIndexChanged: channelDrawer.close()
     }
 
     // Grabs the visible graph area (scan/spectrum/integral plots or the 3D surface).
@@ -47,9 +56,9 @@ ApplicationWindow {
         id: fileDialog
         title: qsTr("Open data files")
         fileMode: FileDialog.OpenFiles
-        nameFilters: [qsTr("AUC data (*.auc *.mwrs *.mw *.mw? *.ra? *.ri? *.ip? *.wa? *.wi? *.fi?)"), qsTr("openAUC (*.auc)"),
+        nameFilters: win.isAndroid ? [] : [qsTr("AUC data (*.auc *.mwrs *.mw *.mw? *.ra? *.ri? *.ip? *.wa? *.wi? *.fi?)"), qsTr("openAUC (*.auc)"),
                       qsTr("Multi-wavelength (*.mwrs *.mw *.mw?)"), qsTr("Beckman XL (*.ra? *.ri? *.ip? *.wa? *.wi? *.fi?)"),
-                      qsTr("All files (*)")]
+                      qsTr("All files (*)")]  // Android: the picker maps filters to MIME types, the AUC extensions have none
         onAccepted: ctrl.openFiles(selectedFiles)
     }
     FolderDialog {
@@ -81,10 +90,87 @@ ApplicationWindow {
     Shortcut { sequences: ["Ctrl+Right", "PgUp"]; onActivated: ctrl.stepWavelength(1) }
     Shortcut { sequences: ["Ctrl+Left", "PgDown"]; onActivated: ctrl.stepWavelength(-1) }
 
+    function startWatch() { folderDialog.live = true; folderDialog.open() }
+
+    Menu {
+        id: actionsMenu
+        MenuItem { text: qsTr("Open files…"); onTriggered: fileDialog.open() }
+        MenuItem { text: qsTr("Open folder…"); onTriggered: { folderDialog.live = false; folderDialog.open() } }
+        MenuItem {
+            text: ctrl.live ? qsTr("Stop live mode") : qsTr("Watch folder…")
+            onTriggered: ctrl.live ? ctrl.stopLive() : win.startWatch()
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: ctrl.exporting ? qsTr("Exporting…") : qsTr("Export…")
+            enabled: scanView.plot.hasData && !ctrl.exporting
+            onTriggered: exportDialog.open()
+        }
+        MenuItem { text: qsTr("Save graph…"); enabled: ctrl.scanCount > 0; onTriggered: saveGraphDialog.open() }
+        MenuItem {
+            text: qsTr("Print…")
+            visible: ctrl.canPrint
+            height: visible ? implicitHeight : 0
+            enabled: ctrl.scanCount > 0
+            onTriggered: win.grabGraph(r => ctrl.printImage(r.image, ctrl.runInfo))
+        }
+        MenuSeparator {}
+        MenuItem { text: qsTr("Close all channels"); enabled: ctrl.channels.length > 0; onTriggered: ctrl.closeAll() }
+    }
+
     header: ToolBar {
+      ColumnLayout {
+        anchors.fill: parent
+        spacing: 0
+
+        // Phone: channels · current channel · fit · options · menu
         RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 6
+            visible: win.compact
+            spacing: 0
+            Layout.fillWidth: true
+            IconButton { glyph: "menu"; onClicked: channelDrawer.open() }
+            ColumnLayout {
+                spacing: 0
+                Layout.fillWidth: true
+                Label {
+                    id: compactTitle
+                    text: ctrl.currentIndex >= 0 && ctrl.channels.length > ctrl.currentIndex
+                          ? ctrl.channels[ctrl.currentIndex].title : "AUCDataTool"
+                    font.bold: true
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Label {
+                    visible: text !== ""
+                    text: ctrl.live ? qsTr("● Live – %1").arg(ctrl.runInfo) : ctrl.runInfo
+                    color: compactTitle.color  // toolbar text colour; "● Live" marks live mode
+                    font.pixelSize: 11
+                    opacity: 0.8
+                    elide: Text.ElideLeft
+                    Layout.fillWidth: true
+                }
+            }
+            Item {
+                id: landscapeTabSlot
+                visible: win.landscapePhone
+                Layout.preferredWidth: 300
+                Layout.fillHeight: true
+            }
+            BusyIndicator {
+                visible: win.landscapePhone && ctrl.busy
+                running: visible
+                Layout.preferredWidth: 32
+                Layout.preferredHeight: 32
+            }
+            IconButton { glyph: "fit"; enabled: scanView.plot.hasData; onClicked: scanView.plot.autoscale() }
+            IconButton { glyph: "tune"; onClicked: optionsDrawer.open() }
+            IconButton { id: moreButton; glyph: "more"; onClicked: actionsMenu.popup(moreButton, moreButton.width - actionsMenu.width, moreButton.height) }
+        }
+
+        RowLayout {
+            visible: !win.compact
+            Layout.fillWidth: true
+            Layout.leftMargin: 6
             spacing: 2
             ToolButton { text: qsTr("Open files…"); onClicked: fileDialog.open() }
             ToolButton { text: qsTr("Open folder…"); onClicked: { folderDialog.live = false; folderDialog.open() } }
@@ -99,7 +185,7 @@ ApplicationWindow {
                                         : qsTr("Open a folder and add/update files while the run is acquiring")
                 onClicked: {
                     if (ctrl.live) ctrl.stopLive()
-                    else { checked = false; folderDialog.live = true; folderDialog.open() }
+                    else { checked = false; win.startWatch() }
                 }
             }
             ToolSeparator {}
@@ -119,16 +205,11 @@ ApplicationWindow {
             ToolButton { text: qsTr("Save graph…"); enabled: ctrl.scanCount > 0; onClicked: saveGraphDialog.open() }
             ToolSeparator {}
             ToolButton { text: qsTr("Autoscale"); enabled: scanView.plot.hasData; onClicked: scanView.plot.autoscale() }
-            TabBar {
-                id: viewTabs
+            Item {
+                id: wideTabSlot
                 Layout.leftMargin: 8
-                TabButton { text: qsTr("Scans"); width: implicitWidth }
-                TabButton { text: qsTr("Run conditions"); width: implicitWidth }
-                TabButton {
-                    text: qsTr("3D surface")
-                    visible: ctrl.surfaceSupported
-                    width: visible ? implicitWidth : 0
-                }
+                Layout.fillHeight: true
+                implicitWidth: viewTabs.implicitWidth
             }
             Item { Layout.fillWidth: true }
             Label {
@@ -139,16 +220,67 @@ ApplicationWindow {
                 opacity: 0.8
             }
         }
+
+        Item {
+            id: compactTabSlot
+            visible: win.compact && !win.landscapePhone
+            Layout.fillWidth: true
+            implicitHeight: viewTabs.implicitHeight
+        }
+      }
+    }
+
+    // One instance, placed in the toolbar row (desktop) or as a full-width row (phone).
+    TabBar {
+        id: viewTabs
+        parent: !win.compact ? wideTabSlot : win.landscapePhone ? landscapeTabSlot : compactTabSlot
+        anchors.fill: parent
+        // Inside the toolbar, Material (Android) would hand the toolbar's white text to the tabs.
+        Material.foreground: win.Material.foreground
+        readonly property int tabCount: ctrl.surfaceSupported ? 3 : 2
+        // Phone: equal tabs over the slot (not viewTabs.width, which depends on the tabs).
+        readonly property real compactTabWidth: (win.landscapePhone ? landscapeTabSlot.width : win.width) / tabCount
+        TabButton { text: qsTr("Scans"); width: win.compact ? viewTabs.compactTabWidth : implicitWidth }
+        TabButton { text: win.compact ? qsTr("Run") : qsTr("Run conditions"); width: win.compact ? viewTabs.compactTabWidth : implicitWidth }
+        TabButton {
+            text: win.compact ? qsTr("3D") : qsTr("3D surface")
+            visible: ctrl.surfaceSupported
+            width: !visible ? 0 : win.compact ? viewTabs.compactTabWidth : implicitWidth
+        }
+    }
+
+    // Phone: channel list and options as drawers (opened from the toolbar; no edge swipe,
+    // which would collide with panning the plot and the system back gesture).
+    Drawer {
+        id: channelDrawer
+        edge: Qt.LeftEdge
+        width: Math.min(win.width * 0.85, 380)
+        height: win.height
+        dragMargin: 0
+    }
+    Drawer {
+        id: optionsDrawer
+        edge: Qt.RightEdge
+        Material.elevation: 0  // Qt 6.8 Material: the elevation layer leaves a right-edge drawer transparent
+        width: Math.min(win.width * 0.92, 420)
+        height: win.height
+        dragMargin: 0
     }
 
     SplitView {
         anchors.fill: parent
         orientation: Qt.Horizontal
 
-        FileList {
+        Item {
+            id: channelPane
+            visible: !win.compact
             SplitView.preferredWidth: 250
             SplitView.minimumWidth: 160
-            controller: ctrl
+            FileList {
+                parent: win.compact ? channelDrawer.contentItem : channelPane
+                anchors.fill: parent
+                controller: ctrl
+            }
         }
 
         StackLayout {
@@ -168,6 +300,7 @@ ApplicationWindow {
                 xLabel: ctrl.xLabel
                 yLabel: ctrl.yLabel
                 placeholder: ctrl.processingError !== "" ? ctrl.processingError
+                             : win.compact ? qsTr("Open files or a data folder from the menu (top right).\nDrag: pan · Pinch: zoom · Long press + drag: zoom box\nDouble tap: autoscale · Tap: select curve")
                              : qsTr("Open .auc/.mwrs/.mw/XL files or a data folder.\nWheel: zoom · Drag: pan · Right-drag: zoom box · Double-click/F1: autoscale · Click: select curve\nCtrl+←/→: previous/next wavelength")
                 markers: {
                     var m = []
@@ -259,19 +392,28 @@ ApplicationWindow {
         }
         }
 
-        ScrollView {
+        Item {
+            id: optionsPane
+            visible: !win.compact
             SplitView.preferredWidth: 300
             SplitView.minimumWidth: 240
-            contentWidth: availableWidth
-            OptionsPanel {
-                width: parent.width
-                controller: ctrl
-                plot: scanView.plot
+            ScrollView {
+                parent: win.compact ? optionsDrawer.contentItem : optionsPane
+                anchors.fill: parent
+                anchors.margins: win.compact ? 12 : 0
+                contentWidth: availableWidth
+                OptionsPanel {
+                    width: parent.width
+                    controller: ctrl
+                    plot: scanView.plot
+                    compact: win.compact
+                }
             }
         }
     }
 
     footer: ToolBar {
+        visible: !win.landscapePhone
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 8
@@ -279,7 +421,7 @@ ApplicationWindow {
             BusyIndicator { running: ctrl.busy; Layout.preferredHeight: 22; Layout.preferredWidth: 22 }
             Label { text: ctrl.status; elide: Text.ElideRight; Layout.fillWidth: true }
             Label {
-                visible: scanView.plot.hasData
+                visible: scanView.plot.hasData && !win.compact
                 text: qsTr("%1 scans · %2 vertices · processed in %3 ms")
                       .arg(scanView.plot.curveCount)
                       .arg(scanView.plot.vertexCount.toLocaleString(Qt.locale(), "f", 0))
