@@ -30,6 +30,8 @@ enum class DisplayMode { Intensity = 0, Absorbance = 1 };
 enum class ReferenceMode {
     ScanByScan = 0,  ///< sample scan i against reference scan i (LabVIEW: reference channel)
     MeanOfScans = 1, ///< against the mean of reference scans [first, last] (LabVIEW: reference scans)
+    RadialArea = 2,  ///< scan i against the mean of scan i over r ∈ [refR1, refR2] of the reference
+                     ///< channel, or of the channel itself if none is chosen (not in LabVIEW)
 };
 
 /// Per-channel view settings, remembered when switching channels.
@@ -41,6 +43,7 @@ struct ChannelSettings {
     int reference = -1;         ///< channel index, -1 = none
     ReferenceMode refMode = ReferenceMode::ScanByScan;
     int refFirst = 0, refLast = -1;
+    double refR1 = 0.0, refR2 = 0.0;  ///< cm, region for ReferenceMode::RadialArea
     bool darkSubtracted = false;
     QHash<int, CurveStyle> curveStyles;  ///< individual scan styles, by scan index
     bool initialised = false;
@@ -126,6 +129,8 @@ class AppController : public QObject {
     Q_PROPERTY(int refFirst READ refFirst WRITE setRefFirst NOTIFY viewChanged)
     Q_PROPERTY(int refLast READ refLast WRITE setRefLast NOTIFY viewChanged)
     Q_PROPERTY(int referenceScanCount READ referenceScanCount NOTIFY viewChanged)
+    Q_PROPERTY(double refR1 READ refR1 WRITE setRefR1 NOTIFY viewChanged)
+    Q_PROPERTY(double refR2 READ refR2 WRITE setRefR2 NOTIFY viewChanged)
     Q_PROPERTY(bool darkSubtracted READ darkSubtracted WRITE setDarkSubtracted NOTIFY viewChanged)
     Q_PROPERTY(QString processingError READ processingError NOTIFY processingErrorChanged)
 
@@ -228,6 +233,10 @@ public:
     int refLast() const;
     void setRefLast(int s);
     int referenceScanCount() const;
+    double refR1() const;
+    void setRefR1(double r);
+    double refR2() const;
+    void setRefR2(double r);
     bool darkSubtracted() const;
     void setDarkSubtracted(bool on);
     QString processingError() const { return m_processingError; }

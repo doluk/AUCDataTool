@@ -310,6 +310,10 @@ ApplicationWindow {
                         m.push({ value: ctrl.offsetR1, color: "#d97706", label: qsTr("baseline"), key: "offR1" })
                         m.push({ value: ctrl.offsetR2, color: "#d97706", label: "", key: "offR2" })
                     }
+                    if (!ctrl.dataIsAbsorbance && ctrl.displayMode === 1 && ctrl.referenceMode === 2) {
+                        m.push({ value: ctrl.refR1, color: "#7c3aed", label: qsTr("I₀"), key: "refR1" })
+                        m.push({ value: ctrl.refR2, color: "#7c3aed", label: "", key: "refR2" })
+                    }
                     if (ctrl.integrate) {
                         m.push({ value: ctrl.intR1, color: "#1d4ed8", label: qsTr("∫"), key: "intR1" })
                         m.push({ value: ctrl.intR2, color: "#1d4ed8", label: "", key: "intR2" })
@@ -322,6 +326,8 @@ ApplicationWindow {
                     if (key === "specR") ctrl.spectrumRadius = value
                     else if (key === "offR1") ctrl.offsetR1 = value
                     else if (key === "offR2") ctrl.offsetR2 = value
+                    else if (key === "refR1") ctrl.refR1 = value
+                    else if (key === "refR2") ctrl.refR2 = value
                     else if (key === "intR1") ctrl.intR1 = value
                     else if (key === "intR2") ctrl.intR2 = value
                 }

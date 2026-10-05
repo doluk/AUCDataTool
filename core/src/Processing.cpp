@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <numeric>
 
@@ -105,6 +106,43 @@ std::string absorbanceMeanReference(Dataset& sample, const Dataset& reference, s
     for (auto& s : sample.scans) {
         std::vector<float> a(s.values.size());
         absorbance(s.values, i0, a, p);
+        s.values = std::move(a);
+        s.stddev.clear();
+    }
+    sample.type = DataType::RadialAbsorbance;
+    return {};
+}
+
+double windowMean(std::span<const float> values, std::span<const double> radius, double r1, double r2)
+{
+    if (r2 < r1) std::swap(r1, r2);
+    double sum = 0.0;
+    std::size_t n = 0;
+    for (std::size_t j = 0; j < radius.size() && j < values.size(); ++j) {
+        if (radius[j] >= r1 && radius[j] <= r2) {
+            sum += values[j];
+            ++n;
+        }
+    }
+    return n ? sum / double(n) : std::numeric_limits<double>::quiet_NaN();
+}
+
+std::string absorbanceRadialReference(Dataset& sample, const Dataset& reference, double r1, double r2,
+                                      const AbsorbanceParams& p)
+{
+    const std::size_t n = std::min(sample.scans.size(), reference.scans.size());
+    std::vector<float> i0(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const double m = windowMean(reference.scans[i].values, reference.radius, r1, r2);
+        if (std::isnan(m)) return "no radius points in the reference region";
+        i0[i] = float(m);
+    }
+    sample.scans.resize(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        auto& s = sample.scans[i];
+        const std::vector<float> ref(s.values.size(), i0[i]);
+        std::vector<float> a(s.values.size());
+        absorbance(s.values, ref, a, p);
         s.values = std::move(a);
         s.stddev.clear();
     }

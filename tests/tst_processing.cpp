@@ -84,6 +84,38 @@ private slots:
         QVERIFY(!absorbanceMeanReference(m, ref, 5, 9).empty());
     }
 
+    void absorbanceWithRadialReference()
+    {
+        Dataset sample;
+        for (int j = 0; j < 4; ++j) sample.radius.push_back(6.0 + 0.1 * j);
+        for (int i = 0; i < 2; ++i) {
+            Scan s;
+            s.values = {float(10000 * (i + 1)), float(30000 * (i + 1)), 1000.f, 1000.f};
+            sample.scans.push_back(s);
+        }
+        // Sample itself as reference: I0_i = mean of r ∈ [6.0, 6.15] = 20000·(i+1).
+        Dataset a = sample;
+        QVERIFY(absorbanceRadialReference(a, sample, 6.15, 5.95).empty());
+        QCOMPARE(a.type, DataType::RadialAbsorbance);
+        QVERIFY(near(a.scans[0].values[2], std::log10(20.0), 1e-6));
+        QVERIFY(near(a.scans[1].values[3], std::log10(40.0), 1e-6));
+        QVERIFY(near(a.scans[1].values[0], std::log10(2.0), 1e-6));
+
+        // Separate reference on its own radius grid, one scan → result truncated.
+        Dataset ref;
+        ref.radius = {5.9, 6.25, 6.4};
+        Scan r;
+        r.values = {1.f, 5000.f, 1.f};
+        ref.scans.push_back(r);
+        Dataset b = sample;
+        QVERIFY(absorbanceRadialReference(b, ref, 6.2, 6.3).empty());
+        QCOMPARE(b.scanCount(), std::size_t(1));
+        QVERIFY(near(b.scans[0].values[2], std::log10(5.0), 1e-6));
+
+        Dataset c = sample;
+        QVERIFY(!absorbanceRadialReference(c, sample, 7.0, 7.5).empty());  // empty region
+    }
+
     void meanOfSelectedScans()
     {
         const Dataset d = ramp(4, 3);
