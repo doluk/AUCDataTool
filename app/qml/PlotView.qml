@@ -147,6 +147,30 @@ Item {
         y: plot.y + plot.height / 2 - height / 2
     }
 
+    // Axis scales, limits and autoscaling, in the free corner below the y labels.
+    ToolButton {
+        id: axesButton
+        x: 2
+        y: plot.y + plot.height + 4
+        width: root.leftMargin - 8
+        height: root.bottomMargin - 8
+        text: qsTr("Axes")
+        font.pixelSize: 11
+        checked: axesPopup.opened
+        // A press outside the popup already closed it: this click must not reopen it.
+        onClicked: if (!axesPopup.closedJustNow()) axesPopup.open()
+        ToolTip.visible: hovered
+        ToolTip.text: qsTr("Linear/log scale, limits and continuous autoscale")
+    }
+    AxisSettings {
+        id: axesPopup
+        plot: root.plot
+        x: axesButton.x
+        y: axesButton.y - height - 4
+        axes: [{ title: root.xLabel !== "" ? root.xLabel : qsTr("x axis"), axis: plot.xAxis },
+               { title: root.yLabel !== "" ? root.yLabel : qsTr("y axis"), axis: plot.yAxis }]
+    }
+
     Label {
         anchors.centerIn: plot
         visible: !plot.hasData

@@ -96,6 +96,63 @@ void removeSpikes(Dataset& d);
 void reverseRadius(Dataset& d);
 
 // ---------------------------------------------------------------------------------------
+// Interference: fringe jumps
+// ---------------------------------------------------------------------------------------
+//
+// Integrated DGE-AUC workflow (S. Xu et al., AUC 2026): after the air–air jitter correction
+// (subtractBaselineRegion over the air–air region) the solution column of a Rayleigh scan can
+// still be off by whole fringes against the previous scan: the fringe count is lost across the
+// steep meniscus. At an alignment radius, where the profile changes slowly from scan to scan,
+// a change |ΔF| > threshold between consecutive scans is taken as a jump of n = round(ΔF)
+// fringes and the whole scan (and all later ones) is shifted back by n. The alignment is chosen
+// inside a stable interval (route A) or self-consistently (route B), see
+// analyzeFringeAlignment().
+
+struct FringeJumpParams {
+    double threshold = 0.5;   ///< fringes; a larger change between consecutive scans is a jump
+    /// Solution column (meniscus … cell bottom) in which alignments are tried and scans
+    /// crossed; r2 ≤ r1 = whole scan.
+    double r1 = 0.0, r2 = 0.0;
+};
+
+/// Integer correction of every scan when aligned at radius point k: c[0] = 0,
+/// c[i] = c[i−1] + n_i, where n_i = round(ΔF_i) (at least ±1) if the change
+/// ΔF_i = F_i(k) − F_{i−1}(k) exceeds the threshold, else 0. F is the mean over the points
+/// k−2 … k+2. Scan i corrected is F_i − c[i].
+std::vector<int> fringeCorrection(const Dataset& d, std::size_t k, double threshold);
+
+/// Shifts every scan by its fringeCorrection() at the radius point nearest to `rAlign`.
+/// Returns the number of jumps removed.
+std::size_t removeFringeJumps(Dataset& d, double rAlign, const FringeJumpParams& p);
+
+/// Radius at which a − b changes sign (linear interpolation) closest to `near`, within the
+/// window [r1, r2] (r2 ≤ r1 = whole range). NaN if the curves do not cross there.
+double crossingRadius(std::span<const double> radius, std::span<const float> a, std::span<const float> b,
+                      double near, double r1 = 0.0, double r2 = 0.0);
+
+struct FringeAlignment {
+    /// Route A: centre estimated from the first/last-scan intersections, and around it the
+    /// widest radial interval [stableLo, stableHi] in which every alignment gives the same
+    /// integer correction of all scans. Valid if the corrected first/last scans then cross
+    /// inside the interval; stableAlign is that crossing.
+    bool stableValid = false;
+    double centre = 0.0;
+    double stableLo = 0.0, stableHi = 0.0;
+    double stableAlign = 0.0;
+    /// Route B: the trial alignment r* whose corrected first/last-scan crossing T(r*) lies
+    /// at r* itself (|T − r| within a few points) and stays there for the neighbouring trials.
+    bool selfConsistentValid = false;
+    double selfConsistent = 0.0;
+    /// Route A if valid, else route B, else the centre; 0 if no crossing was found at all.
+    double suggested = 0.0;
+    std::size_t jumps = 0;    ///< jumps found when aligned at `suggested`
+};
+
+/// Alignment suggestions for removeFringeJumps() from jitter-corrected interference scans
+/// (before jump removal), using the first and last scan of `d`. Needs ≥ 2 scans.
+FringeAlignment analyzeFringeAlignment(const Dataset& d, const FringeJumpParams& p);
+
+// ---------------------------------------------------------------------------------------
 // Scan selection
 // ---------------------------------------------------------------------------------------
 

@@ -318,6 +318,15 @@ ApplicationWindow {
                         m.push({ value: ctrl.intR1, color: "#1d4ed8", label: qsTr("∫"), key: "intR1" })
                         m.push({ value: ctrl.intR2, color: "#1d4ed8", label: "", key: "intR2" })
                     }
+                    if (ctrl.isInterference && ctrl.fringeJumps) {
+                        if (ctrl.fringeR2 > ctrl.fringeR1) {
+                            m.push({ value: ctrl.fringeR1, color: "#0891b2", label: qsTr("meniscus"), key: "fringeR1" })
+                            m.push({ value: ctrl.fringeR2, color: "#9333ea", label: qsTr("bottom"), key: "fringeR2" })
+                        }
+                        const align = ctrl.fringeAlign > 0 ? ctrl.fringeAlign : (ctrl.fringeInfo.alignment ?? 0)
+                        if (align > 0)
+                            m.push({ value: align, color: "#e11d48", label: qsTr("alignment"), key: "fringeAlign" })
+                    }
                     if (ctrl.showSpectrum && ctrl.hasSpectra)
                         m.push({ value: ctrl.spectrumRadius, color: "#059669", label: qsTr("spectrum"), key: "specR" })
                     return m
@@ -330,6 +339,9 @@ ApplicationWindow {
                     else if (key === "refR2") ctrl.refR2 = value
                     else if (key === "intR1") ctrl.intR1 = value
                     else if (key === "intR2") ctrl.intR2 = value
+                    else if (key === "fringeR1") ctrl.fringeR1 = value
+                    else if (key === "fringeR2") ctrl.fringeR2 = value
+                    else if (key === "fringeAlign") ctrl.fringeAlign = value
                 }
 
                 ColorBar {

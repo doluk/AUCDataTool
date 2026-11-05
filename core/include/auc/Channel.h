@@ -25,7 +25,8 @@ enum class SourceFormat {
     Xl,    ///< Beckman XL-A/XL-I ASCII (.RA1, .RI2, .IP3 …), one file per scan
 };
 
-/// Run conditions of one scan (shared by all wavelengths of that scan).
+/// Run conditions of one scan. .auc/XL store them per wavelength; `scans` holds those of the
+/// first wavelength, wavelengthMean() those of the wavelengths read (see readRows()).
 struct ScanInfo {
     int number = 0;          ///< scan number from the file
     double temperature = 0;  ///< °C
@@ -99,7 +100,12 @@ public:
 
 protected:
     /// Reads rows [first, first+count) for every scan; values[scan][k*npoint + j].
-    virtual IoResult readRows(std::size_t first, std::size_t count, std::vector<std::vector<float>>& values) const = 0;
+    /// Sources storing each wavelength in its own files (.auc, XL) have per-wavelength run
+    /// conditions (XL scans the wavelengths one after another); they fill `conditions`
+    /// (if given) with those of each scan, averaged over the rows. Sources whose scans hold
+    /// all wavelengths leave it empty: `scans` applies.
+    virtual IoResult readRows(std::size_t first, std::size_t count, std::vector<std::vector<float>>& values,
+                              std::vector<ScanInfo>* conditions = nullptr) const = 0;
     /// Calls fn(i, matrix) for each scan index in `scans` with that scan's readings for all
     /// wavelengths (wavelength-major). The default reads all rows via readRows(); sources
     /// storing one file per scan override it.

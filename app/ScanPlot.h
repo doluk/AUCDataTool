@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CurveStyle.h"
+#include "PlotAxis.h"
 #include "PlotSeries.h"
 
 #include <QHash>
@@ -26,10 +27,19 @@
 ///
 /// Axes labels/ticks are produced as `xTicks`/`yTicks` for QML to render; the grid is drawn
 /// here so it stays aligned with the data.
+///
+/// Each axis (`xAxis`, `yAxis`) is linear or logarithmic. On a log axis the vertex buffer
+/// holds log₁₀ of the values, so the view stays a linear map and zoom/pan stay O(1).
 class ScanPlot : public QQuickItem {
     Q_OBJECT
     QML_ELEMENT
+    /// Visible range in axis coordinates (log₁₀ of the value on a logarithmic axis).
     Q_PROPERTY(QRectF viewRect READ viewRect WRITE setViewRect NOTIFY viewRectChanged)
+    Q_PROPERTY(PlotAxis* xAxis READ xAxis CONSTANT)
+    Q_PROPERTY(PlotAxis* yAxis READ yAxis CONSTANT)
+    /// Autoscale whenever the data changes (e.g. while the offset marker is dragged);
+    /// locked limits are kept.
+    Q_PROPERTY(bool autoscaleContinuous READ autoscaleContinuous WRITE setAutoscaleContinuous NOTIFY autoscaleContinuousChanged)
     Q_PROPERTY(QVariantList xTicks READ xTicks NOTIFY ticksChanged)
     Q_PROPERTY(QVariantList yTicks READ yTicks NOTIFY ticksChanged)
     Q_PROPERTY(bool hasData READ hasData NOTIFY dataChanged)
@@ -56,9 +66,13 @@ public:
     void setSeries(PlotSeriesPtr series, bool keepView = false);
     PlotSeriesPtr series() const { return m_series; }
 
-    /// Visible data range: x = xMin, width = xMax − xMin, y = yMin, height = yMax − yMin.
+    /// Visible range in axis coordinates: x = xMin, width = xMax − xMin, y = yMin, height = yMax − yMin.
     QRectF viewRect() const { return m_view; }
     void setViewRect(const QRectF& r);
+    PlotAxis* xAxis() const { return m_xAxis; }
+    PlotAxis* yAxis() const { return m_yAxis; }
+    bool autoscaleContinuous() const { return m_autoscaleContinuous; }
+    void setAutoscaleContinuous(bool on);
 
     QVariantList xTicks() const { return m_xTicks; }
     QVariantList yTicks() const { return m_yTicks; }
@@ -93,6 +107,7 @@ public:
     Q_INVOKABLE void resetCurveStyle(int id);
     Q_INVOKABLE void resetCurveStyles();
 
+    /// Fits the free limits to the visible curves; y to the points inside the x range.
     Q_INVOKABLE void autoscale();
     /// Zoom by `factor` (>1 zooms in) around the pixel position (px, py).
     Q_INVOKABLE void zoomAt(double px, double py, double factorX, double factorY);
@@ -111,12 +126,21 @@ signals:
     void gridColorChanged();
     void showGridChanged();
     void stylesChanged();
+    void autoscaleContinuousChanged();
 
 protected:
     QSGNode* updatePaintNode(QSGNode* old, UpdatePaintNodeData*) override;
     void geometryChange(const QRectF& newGeometry, const QRectF& oldGeometry) override;
 
 private:
+    /// Value → axis coordinate (log₁₀ on a log axis, NaN for values ≤ 0 there) and back.
+    static double toAxis(bool log, double v) { return log ? (v > 0 ? std::log10(v) : std::numeric_limits<double>::quiet_NaN()) : v; }
+    static double fromAxis(bool log, double t) { return log ? std::pow(10.0, t) : t; }
+    double axisX(double px) const;
+    double axisY(double py) const;
+    void syncAxes();
+    void axisLogChanged(PlotAxis* axis);
+    void axisLimitEdited(PlotAxis* axis, bool upper);
     void updateTicks();
     void stylesEdited();
     int curveId(std::size_t c) const;
@@ -128,6 +152,9 @@ private:
 
     PlotSeriesPtr m_series;
     QRectF m_view{0, 0, 1, 1};
+    PlotAxis* m_xAxis = nullptr;
+    PlotAxis* m_yAxis = nullptr;
+    bool m_autoscaleContinuous = false;
     QVariantList m_xTicks, m_yTicks;
     std::vector<double> m_xTickPos, m_yTickPos;
     QColor m_gridColor{220, 220, 220};

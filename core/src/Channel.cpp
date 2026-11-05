@@ -173,7 +173,8 @@ IoResult ChannelSource::wavelengthMean(std::size_t first, std::size_t count, std
     }
 
     std::vector<std::vector<float>> rows;
-    if (IoResult r = readRows(first, count, rows); !r.ok()) return r;
+    std::vector<ScanInfo> conditions;
+    if (IoResult r = readRows(first, count, rows, &conditions); !r.ok()) return r;
 
     double meanWl = 0.0;
     for (std::size_t k = 0; k < count; ++k) meanWl += wavelengths[first + k];
@@ -191,6 +192,13 @@ IoResult ChannelSource::wavelengthMean(std::size_t first, std::size_t count, std
             for (std::size_t j = 0; j < np && k * np + j < src.size(); ++j) v[j] += src[k * np + j];
         if (count > 1)
             for (float& x : v) x /= float(count);
+        if (i < conditions.size()) {
+            Scan& s = d->scans[i];
+            s.temperature = conditions[i].temperature;
+            s.rpm = conditions[i].rpm;
+            s.seconds = conditions[i].seconds;
+            s.omega2t = conditions[i].omega2t;
+        }
     }
 
     std::lock_guard lock(m_cacheMutex);
@@ -201,6 +209,16 @@ IoResult ChannelSource::wavelengthMean(std::size_t first, std::size_t count, std
 }
 
 namespace {
+
+/// Adds one wavelength's run conditions to the mean over `n` wavelengths.
+void addConditions(ScanInfo& c, double temperature, double rpm, double seconds, double omega2t, std::size_t n)
+{
+    const double w = 1.0 / double(std::max<std::size_t>(n, 1));
+    c.temperature += temperature * w;
+    c.rpm += rpm * w;
+    c.seconds += seconds * w;
+    c.omega2t += omega2t * w;
+}
 
 // ---------------------------------------------------------------------------------------
 // MWL scan-file channels (.mwrs, .mw)
@@ -330,7 +348,8 @@ public:
     }
 
 protected:
-    IoResult readRows(std::size_t first, std::size_t count, std::vector<std::vector<float>>& out) const override
+    IoResult readRows(std::size_t first, std::size_t count, std::vector<std::vector<float>>& out,
+                      std::vector<ScanInfo>* /*conditions: all wavelengths share `scans`*/) const override
     {
         const std::size_t np = radius.size();
         out.assign(scanFiles.size(), {});
@@ -458,18 +477,26 @@ public:
     }
 
 protected:
-    IoResult readRows(std::size_t first, std::size_t count, std::vector<std::vector<float>>& out) const override
+    IoResult readRows(std::size_t first, std::size_t count, std::vector<std::vector<float>>& out,
+                      std::vector<ScanInfo>* conditions) const override
     {
         const std::size_t np = radius.size();
         const std::size_t ns = scans.size();
         out.assign(ns, std::vector<float>(count * np, 0.f));
+        if (conditions) {
+            *conditions = scans;
+            for (ScanInfo& c : *conditions) c.temperature = c.rpm = c.seconds = c.omega2t = 0.0;
+        }
         for (std::size_t k = 0; k < count; ++k) {
             Dataset d;
             if (IoResult r = AucFile::read(wlFiles[first + k].path, d); !r.ok()) return r;
             if (d.pointCount() != np)
                 return {IoResult::NotAucFile, QStringLiteral("%1: radius grid differs").arg(QFileInfo(wlFiles[first + k].path).fileName())};
-            for (std::size_t i = 0; i < ns && i < d.scans.size(); ++i)
-                std::copy(d.scans[i].values.begin(), d.scans[i].values.end(), out[i].begin() + std::ptrdiff_t(k * np));
+            for (std::size_t i = 0; i < ns && i < d.scans.size(); ++i) {
+                const Scan& s = d.scans[i];
+                std::copy(s.values.begin(), s.values.end(), out[i].begin() + std::ptrdiff_t(k * np));
+                if (conditions) addConditions((*conditions)[i], s.temperature, s.rpm, s.seconds, s.omega2t, count);
+            }
         }
         return {};
     }
@@ -560,11 +587,24 @@ public:
     }
 
 protected:
-    IoResult readRows(std::size_t first, std::size_t count, std::vector<std::vector<float>>& out) const override
+    IoResult readRows(std::size_t first, std::size_t count, std::vector<std::vector<float>>& out,
+                      std::vector<ScanInfo>* conditions) const override
     {
         const std::size_t np = radius.size();
         const std::size_t ns = scans.size();
         out.assign(ns, std::vector<float>(count * np, std::numeric_limits<float>::quiet_NaN()));
+        const std::size_t rows = std::min(count, m_lists.size() - std::min(first, m_lists.size()));
+        if (conditions) {
+            *conditions = scans;
+            for (ScanInfo& c : *conditions) c.temperature = c.rpm = c.seconds = c.omega2t = 0.0;
+            for (std::size_t k = 0; k < rows; ++k) {
+                const auto& list = *m_lists[first + k];
+                for (std::size_t i = 0; i < ns && i < list.size(); ++i) {
+                    const auto& h = list[i].header;
+                    addConditions((*conditions)[i], h.temperature, h.rpm, h.seconds, h.omega2t, rows);
+                }
+            }
+        }
         xl::ScanFile sf;
         for (std::size_t k = 0; k < count && first + k < m_lists.size(); ++k) {
             const auto& list = *m_lists[first + k];

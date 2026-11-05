@@ -420,6 +420,7 @@ int AppController::scanCount() const { return currentSrc() ? int(currentSrc()->s
 double AppController::radiusMin() const { return currentSrc() && !currentSrc()->radius.empty() ? currentSrc()->radius.front() : 0.0; }
 double AppController::radiusMax() const { return currentSrc() && !currentSrc()->radius.empty() ? currentSrc()->radius.back() : 1.0; }
 bool AppController::dataIsAbsorbance() const { return currentSrc() && currentSrc()->absorbanceData; }
+bool AppController::isInterference() const { return currentSrc() && currentSrc()->rawType == auc::DataType::Interference; }
 bool AppController::hasDarkCurrent() const { return currentSrc() && !currentSrc()->darkCurrent.empty(); }
 int AppController::wavelengthCount() const { return currentSrc() ? int(currentSrc()->wavelengths.size()) : 0; }
 double AppController::wavelengthMin() const { return wavelengthCount() ? currentSrc()->wavelengths.front() : 0.0; }
@@ -647,6 +648,11 @@ ProcessingOptions AppController::currentOptions() const
     o.offsetMode = ProcessingOptions::OffsetMode(std::clamp(m_optOffsetMode, 0, 2));
     o.offsetR1 = m_optOffsetR1;
     o.offsetR2 = m_optOffsetR2;
+    o.fringeJumps = m_optFringe;
+    o.fringeAlign = m_optFringeAlign;
+    o.fringeThreshold = std::max(0.05, m_optFringeThreshold);
+    o.fringeR1 = m_optFringeR1;
+    o.fringeR2 = m_optFringeR2;
     o.firstScan = std::max(0, m_optFirst);
     o.lastScan = m_optLast;
     o.everyNth = std::max(1, m_optNth);
@@ -777,6 +783,44 @@ AppController::Result AppController::runProcessing(Job job)
     if (o.removeSpikes) auc::proc::removeSpikes(*d);
     if (o.offsetMode == ProcessingOptions::OffsetPoint) auc::proc::subtractOffsetAt(*d, o.offsetR1);
     if (o.offsetMode == ProcessingOptions::OffsetRegion) auc::proc::subtractBaselineRegion(*d, o.offsetR1, o.offsetR2);
+    if (o.fringeJumps && src.rawType == auc::DataType::Interference && d->scans.size() >= 2) {
+        // Fringe-jump correction (S. Xu et al., AUC 2026): the alignment suggestions come
+        // from the jitter-corrected scans before the jumps are removed.
+        auc::proc::FringeJumpParams fp{o.fringeThreshold, o.fringeR1, o.fringeR2};
+        if (!(fp.r2 > fp.r1) && o.offsetMode == ProcessingOptions::OffsetRegion && !d->radius.empty()) {
+            // No meniscus/bottom given: the solution column starts after the air–air region
+            // (inside it every jitter-corrected scan is 0 and would look perfectly aligned).
+            fp.r1 = std::max(o.offsetR1, o.offsetR2);
+            fp.r2 = std::max(d->radius.front(), d->radius.back());
+        }
+        const auc::proc::FringeAlignment a = auc::proc::analyzeFringeAlignment(*d, fp);
+        const double align = o.fringeAlign > 0.0 ? o.fringeAlign : a.suggested;
+        QVariantMap f;
+        f.insert(QStringLiteral("centre"), a.centre);
+        f.insert(QStringLiteral("stableValid"), a.stableValid);
+        f.insert(QStringLiteral("stableLo"), a.stableLo);
+        f.insert(QStringLiteral("stableHi"), a.stableHi);
+        f.insert(QStringLiteral("stableAlign"), a.stableAlign);
+        f.insert(QStringLiteral("selfConsistentValid"), a.selfConsistentValid);
+        f.insert(QStringLiteral("selfConsistent"), a.selfConsistent);
+        if (align > 0.0) {
+            f.insert(QStringLiteral("jumps"), qulonglong(auc::proc::removeFringeJumps(*d, align, fp)));
+            const auto& first = d->scans.front().values;
+            const double iso = auc::proc::crossingRadius(d->radius, first, d->scans.back().values, align, fp.r1, fp.r2);
+            f.insert(QStringLiteral("valid"), true);
+            f.insert(QStringLiteral("alignment"), align);
+            if (std::isfinite(iso)) {
+                const double pos = auc::proc::thresholdIndex(d->radius, iso);
+                const std::size_t i = std::min<std::size_t>(std::size_t(pos), d->pointCount() - 2);
+                f.insert(QStringLiteral("iso"), iso);
+                f.insert(QStringLiteral("isoFringes"), first[i] + (pos - double(i)) * (first[i + 1] - first[i]));
+            }
+        } else {
+            f.insert(QStringLiteral("valid"), false);
+            warnings << tr("fringe jumps: the first and last scan do not cross – set the alignment radius");
+        }
+        res.fringe = f;
+    }
 
     res.scanIds = scanIds;
     if (!job.plots) {
@@ -1139,6 +1183,10 @@ void AppController::onProcessed()
     if (r.error != m_processingError) {
         m_processingError = r.error;
         emit processingErrorChanged();
+    }
+    if (r.fringe != m_fringeInfo) {
+        m_fringeInfo = r.fringe;
+        emit fringeInfoChanged();
     }
     if (!r.error.isEmpty()) {
         setStatus(r.error);

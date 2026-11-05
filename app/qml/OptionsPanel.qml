@@ -445,6 +445,113 @@ ColumnLayout {
         }
     }
 
+    // Interference workflow of S. Xu et al. (AUC 2026): jitter correction with the baseline
+    // offset over the air–air region, then fringe-jump removal held at an alignment radius.
+    GroupBox {
+        title: qsTr("Fringe-jump correction")
+        Layout.fillWidth: true
+        enabled: root.hasData
+        visible: root.controller.isInterference
+        ColumnLayout {
+            id: fringe
+            anchors.fill: parent
+            readonly property var info: root.controller.fringeInfo
+            Label {
+                visible: root.controller.offsetMode !== 2
+                text: qsTr("Correct the air–air jitter first: Offset → Baseline region over the air–air region.")
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                opacity: 0.6
+                font.pixelSize: 11
+            }
+            CheckBox {
+                text: qsTr("Remove fringe jumps")
+                checked: root.controller.fringeJumps
+                onToggled: root.controller.fringeJumps = checked
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("At the alignment radius, a change |ΔF| > threshold from one scan to the next is a jump of round(ΔF) fringes; the scan is shifted back by it")
+            }
+            GridLayout {
+                columns: 2
+                visible: root.controller.fringeJumps
+                Layout.fillWidth: true
+                Label { text: qsTr("Meniscus r_a (cm)") }
+                NumberField {
+                    Layout.fillWidth: true
+                    value: root.controller.fringeR1
+                    onCommitted: (v) => root.controller.fringeR1 = v
+                }
+                Label { text: qsTr("Bottom r_b (cm)") }
+                NumberField {
+                    Layout.fillWidth: true
+                    value: root.controller.fringeR2
+                    onCommitted: (v) => root.controller.fringeR2 = v
+                }
+                Label { text: qsTr("Threshold (fringes)") }
+                NumberField {
+                    Layout.fillWidth: true
+                    decimals: 2
+                    value: root.controller.fringeThreshold
+                    onCommitted: (v) => root.controller.fringeThreshold = v
+                }
+                Label { text: qsTr("Alignment (cm)") }
+                NumberField {
+                    Layout.fillWidth: true
+                    value: root.controller.fringeAlign > 0 ? root.controller.fringeAlign : (fringe.info.alignment ?? 0)
+                    onCommitted: (v) => root.controller.fringeAlign = v
+                    ToolTip.visible: hovered
+                    ToolTip.text: root.controller.fringeAlign > 0 ? qsTr("Set manually")
+                                                                  : qsTr("Automatic (route A, else route B)")
+                }
+            }
+            Flow {
+                visible: root.controller.fringeJumps
+                Layout.fillWidth: true
+                spacing: 6
+                Button {
+                    text: qsTr("Stable interval (A)")
+                    enabled: fringe.info.stableValid ?? false
+                    onClicked: root.controller.fringeAlign = fringe.info.stableAlign
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Align inside the widest interval around the centre in which no scan has a jump")
+                }
+                Button {
+                    text: qsTr("Self-consistent (B)")
+                    enabled: fringe.info.selfConsistentValid ?? false
+                    onClicked: root.controller.fringeAlign = fringe.info.selfConsistent
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Align at r* where the corrected first/last-scan crossing T(r*) ≈ r*")
+                }
+                Button {
+                    text: qsTr("Auto")
+                    enabled: root.controller.fringeAlign > 0
+                    onClicked: root.controller.fringeAlign = 0
+                }
+            }
+            Label {
+                visible: root.controller.fringeJumps && fringe.info.valid !== undefined
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                font.pixelSize: 11
+                text: {
+                    const f = fringe.info
+                    const cm = (v) => Number(v).toFixed(4) + " cm"
+                    let t = []
+                    t.push(qsTr("%n jump(s) found", "", Number(f.jumps ?? 0)))
+                    t.push(qsTr("Route A: %1").arg(f.stableValid ? cm(f.stableLo) + " – " + cm(f.stableHi)
+                                                                 : qsTr("not identified")))
+                    t.push(qsTr("Route B: %1").arg(f.selfConsistentValid ? cm(f.selfConsistent) : qsTr("not identified")))
+                    if (f.iso !== undefined)
+                        t.push(qsTr("Isoconcentration point: %1 (%2 fringes)").arg(cm(f.iso)).arg(Number(f.isoFringes).toFixed(4)))
+                    const ra = root.controller.fringeR1, rb = root.controller.fringeR2
+                    if (rb > ra && ra > 0)
+                        t.push(qsTr("Theoretical iso √((r_b² + r_a²)/2): %1").arg(cm(Math.sqrt((rb * rb + ra * ra) / 2))))
+                    return t.join("\n")
+                }
+            }
+        }
+    }
+
     GroupBox {
         title: qsTr("Radial integration")
         Layout.fillWidth: true

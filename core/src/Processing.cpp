@@ -8,6 +8,7 @@
 #include <limits>
 #include <numbers>
 #include <numeric>
+#include <utility>
 
 namespace auc::proc {
 
@@ -234,6 +235,192 @@ void reverseRadius(Dataset& d)
         std::reverse(s.stddev.begin(), s.stddev.end());
         s.interpolated.clear();  // bitmap no longer matches; recompute if needed
     }
+}
+
+namespace {
+
+/// Point indices [lo, hi] of the radial window [r1, r2] (whole range if r2 ≤ r1).
+std::pair<std::size_t, std::size_t> windowIndices(std::span<const double> radius, double r1, double r2)
+{
+    if (radius.empty()) return {0, 0};
+    if (!(r2 > r1)) return {0, radius.size() - 1};
+    std::size_t lo = 0, hi = radius.size() - 1;
+    while (lo < hi && radius[lo] < r1) ++lo;
+    while (hi > lo && radius[hi] > r2) --hi;
+    return {lo, hi};
+}
+
+}  // namespace
+
+std::vector<int> fringeCorrection(const Dataset& d, std::size_t k, double threshold)
+{
+    std::vector<int> c(d.scans.size(), 0);
+    const std::size_t n = d.pointCount();
+    if (n == 0 || c.empty()) return c;
+    k = std::min(k, n - 1);
+    const std::size_t a = k >= 2 ? k - 2 : 0, b = std::min(k + 2, n - 1);
+    auto level = [&](const Scan& s) {
+        double sum = 0.0;
+        std::size_t m = 0;
+        for (std::size_t j = a; j <= b && j < s.values.size(); ++j)
+            if (std::isfinite(s.values[j])) {
+                sum += s.values[j];
+                ++m;
+            }
+        return m ? sum / double(m) : std::numeric_limits<double>::quiet_NaN();
+    };
+    threshold = std::max(threshold, 0.0);
+    double prev = level(d.scans[0]);
+    for (std::size_t i = 1; i < d.scans.size(); ++i) {
+        const double cur = level(d.scans[i]);
+        const double dv = cur - prev;
+        int step = 0;
+        if (std::isfinite(dv) && std::abs(dv) > threshold) {
+            step = int(std::lround(dv));
+            if (step == 0) step = dv > 0 ? 1 : -1;
+        }
+        c[i] = c[i - 1] + step;
+        if (std::isfinite(cur)) prev = cur;
+    }
+    return c;
+}
+
+std::size_t removeFringeJumps(Dataset& d, double rAlign, const FringeJumpParams& p)
+{
+    if (d.radius.empty()) return 0;
+    const std::vector<int> c = fringeCorrection(d, nearestIndex(d.radius, rAlign), p.threshold);
+    std::size_t jumps = 0;
+    for (std::size_t i = 0; i < d.scans.size(); ++i) {
+        if (i && c[i] != c[i - 1]) ++jumps;
+        for (float& v : d.scans[i].values) v -= float(c[i]);
+    }
+    return jumps;
+}
+
+double crossingRadius(std::span<const double> radius, std::span<const float> a, std::span<const float> b, double near,
+                      double r1, double r2)
+{
+    const std::size_t n = std::min({radius.size(), a.size(), b.size()});
+    double best = std::numeric_limits<double>::quiet_NaN();
+    if (n < 2) return best;
+    const auto [lo, hi] = windowIndices(radius.first(n), r1, r2);
+    auto consider = [&](double r) {
+        if (std::isnan(best) || std::abs(r - near) < std::abs(best - near)) best = r;
+    };
+    for (std::size_t j = lo; j < hi; ++j) {
+        const double d0 = double(a[j]) - double(b[j]), d1 = double(a[j + 1]) - double(b[j + 1]);
+        if (!std::isfinite(d0) || !std::isfinite(d1)) continue;
+        if (d0 == 0.0) consider(radius[j]);
+        else if ((d0 < 0.0) != (d1 < 0.0) && d1 != 0.0) consider(radius[j] + d0 / (d0 - d1) * (radius[j + 1] - radius[j]));
+    }
+    if (const double dl = double(a[hi]) - double(b[hi]); dl == 0.0) consider(radius[hi]);
+    return best;
+}
+
+FringeAlignment analyzeFringeAlignment(const Dataset& d, const FringeJumpParams& p)
+{
+    FringeAlignment out;
+    const std::size_t n = d.pointCount();
+    if (d.scans.size() < 2 || n < 3) return out;
+    for (const auto& s : d.scans)
+        if (s.values.size() < n) return out;
+    const auto [lo, hi] = windowIndices(d.radius, p.r1, p.r2);
+    if (hi < lo + 2) return out;
+
+    // T(r): crossing of the first and last scan nearest r after the correction aligned at r
+    // (the first scan is never shifted).
+    const auto& first = d.scans.front().values;
+    const auto& last = d.scans.back().values;
+    // Only a clear crossing counts: away from it the scans separate by more than the threshold,
+    // with opposite signs on the two sides. Where they lie on top of each other (the air–air
+    // region, which the jitter correction sets to 0 in every scan) noise crosses them anywhere.
+    std::vector<float> lk(n);
+    auto crossingFor = [&](std::size_t k, double near) {
+        const float shift = float(fringeCorrection(d, k, p.threshold).back());
+        for (std::size_t j = 0; j < n; ++j) lk[j] = last[j] - shift;
+        const double t = crossingRadius(d.radius, first, lk, near, p.r1, p.r2);
+        if (!std::isfinite(t)) return t;
+        const std::size_t c = std::clamp(nearestIndex(d.radius, t), lo, hi);
+        auto side = [&](std::ptrdiff_t step) {
+            for (std::ptrdiff_t j = std::ptrdiff_t(c); j >= std::ptrdiff_t(lo) && j <= std::ptrdiff_t(hi); j += step) {
+                const double diff = double(lk[std::size_t(j)]) - double(first[std::size_t(j)]);
+                if (std::abs(diff) > p.threshold) return diff > 0 ? 1 : -1;
+            }
+            return 0;
+        };
+        const int left = side(-1), right = side(1);
+        return left != 0 && right != 0 && left != right ? t : std::numeric_limits<double>::quiet_NaN();
+    };
+
+    const std::size_t stride = std::max<std::size_t>(1, (hi - lo + 1) / 400);
+    std::vector<std::size_t> trialIdx;
+    std::vector<double> trialT;
+    for (std::size_t k = lo; k <= hi; k += stride) {
+        trialIdx.push_back(k);
+        trialT.push_back(crossingFor(k, d.radius[k]));
+    }
+    std::vector<double> finite;
+    for (double t : trialT)
+        if (std::isfinite(t)) finite.push_back(t);
+    if (finite.empty()) return out;
+    std::nth_element(finite.begin(), finite.begin() + std::ptrdiff_t(finite.size() / 2), finite.end());
+    out.centre = finite[finite.size() / 2];
+
+    // Route A: expand from the centre while the integer correction of all scans stays the same.
+    {
+        const std::size_t kc = std::clamp(nearestIndex(d.radius, out.centre), lo, hi);
+        const std::vector<int> cc = fringeCorrection(d, kc, p.threshold);
+        std::size_t a = kc, b = kc;
+        while (a > lo && fringeCorrection(d, a - 1, p.threshold) == cc) --a;
+        while (b < hi && fringeCorrection(d, b + 1, p.threshold) == cc) ++b;
+        out.stableLo = d.radius[a];
+        out.stableHi = d.radius[b];
+        const double t = crossingFor(kc, out.centre);
+        if (b >= a + 2 && std::isfinite(t) && t >= out.stableLo && t <= out.stableHi) {
+            out.stableValid = true;
+            out.stableAlign = t;
+        }
+    }
+
+    auto jumpsAt = [&](std::size_t k) {
+        const std::vector<int> c = fringeCorrection(d, k, p.threshold);
+        std::size_t count = 0;
+        for (std::size_t i = 1; i < c.size(); ++i) count += c[i] != c[i - 1];
+        return count;
+    };
+
+    // Route B: fixed point T(r*) ≈ r*, stable against the neighbouring trials. Far from the
+    // isoconcentration point the real change between scans can be rounded away as "jumps" and
+    // give a fixed point as well; at the true one the profile hardly changes, so of several
+    // fixed points the one needing the fewest jumps wins.
+    {
+        const double dr = (d.radius[hi] - d.radius[lo]) / double(hi - lo);
+        const double tol = std::abs(dr) * double(std::max<std::size_t>(3, 2 * stride));
+        std::size_t bestJumps = SIZE_MAX;
+        double bestSpread = std::numeric_limits<double>::infinity(), bestErr = bestSpread;
+        for (std::size_t m = 0; m < trialIdx.size(); ++m) {
+            const double t = trialT[m];
+            if (!std::isfinite(t)) continue;
+            const double err = std::abs(t - d.radius[trialIdx[m]]);
+            if (err > tol) continue;
+            double spread = 0.0;
+            for (std::size_t q = m >= 2 ? m - 2 : 0; q <= m + 2 && q < trialIdx.size(); ++q)
+                spread = std::max(spread, std::isfinite(trialT[q]) ? std::abs(trialT[q] - t) : std::numeric_limits<double>::infinity());
+            if (spread > tol) continue;
+            const std::size_t jumps = jumpsAt(trialIdx[m]);
+            if (jumps < bestJumps || (jumps == bestJumps && (spread < bestSpread || (spread == bestSpread && err < bestErr)))) {
+                bestJumps = jumps;
+                bestSpread = spread;
+                bestErr = err;
+                out.selfConsistent = t;
+                out.selfConsistentValid = true;
+            }
+        }
+    }
+
+    out.suggested = out.stableValid ? out.stableAlign : out.selfConsistentValid ? out.selfConsistent : out.centre;
+    out.jumps = jumpsAt(nearestIndex(d.radius, out.suggested));
+    return out;
 }
 
 std::vector<std::size_t> selectScans(std::size_t scanCount, std::size_t first, std::size_t last,

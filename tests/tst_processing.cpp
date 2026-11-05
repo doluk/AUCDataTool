@@ -250,6 +250,70 @@ private slots:
         QVERIFY(near(d.scans[0].values.front(), 0.2, 1e-6));
     }
 
+    void fringeJumpRemoval()
+    {
+        // Flat scans at 0, 1.02, 0.98, 3.4 fringes: jumps of +1 and +2 between consecutive scans.
+        Dataset d = ramp(4, 20);
+        const float level[] = {0.f, 1.02f, 0.98f, 3.4f};
+        for (std::size_t i = 0; i < 4; ++i)
+            for (float& v : d.scans[i].values) v = level[i];
+        const std::vector<int> expected{0, 1, 1, 3};
+        QVERIFY(fringeCorrection(d, 10, 0.5) == expected);
+        QVERIFY(fringeCorrection(d, 10, 3.0) == std::vector<int>(4, 0));  // below the threshold
+
+        QCOMPARE(removeFringeJumps(d, d.radius[10], {}), std::size_t(2));
+        QVERIFY(near(d.scans[1].values[0], 0.02, 1e-6));  // whole scan shifted
+        QVERIFY(near(d.scans[2].values[19], -0.02, 1e-6));
+        QVERIFY(near(d.scans[3].values[5], 0.4, 1e-6));
+    }
+
+    void fringeCrossing()
+    {
+        const std::vector<double> r{6.0, 6.1, 6.2, 6.3, 6.4};
+        const std::vector<float> a{0.f, 1.f, 2.f, 3.f, 4.f}, b{2.f, 2.f, 2.f, 2.f, 2.f}, c{1.f, 1.f, 1.f, 1.f, 1.f};
+        QVERIFY(near(crossingRadius(r, a, b, 6.0), 6.2, 1e-9));
+        QVERIFY(near(crossingRadius(r, a, std::vector<float>{0.5f, 0.5f, 0.5f, 0.5f, 0.5f}, 6.3), 6.05, 1e-6));
+        QVERIFY(std::isnan(crossingRadius(r, a, b, 6.0, 6.3, 6.4)));  // outside the window
+        QVERIFY(std::isnan(crossingRadius(r, b, c, 6.2)));            // parallel
+    }
+
+    void fringeAlignment()
+    {
+        // Ten scans through a common point at 6.6 cm (slopes 0 … 45 fringes/cm, 0.001 cm grid):
+        // from one scan to the next the profile changes by 5·(r − 6.6) fringes. From scan 3 on
+        // all scans are 2 fringes too high, from scan 7 on 1 fringe less.
+        Dataset d;
+        const int points = 1201;
+        for (int j = 0; j < points; ++j) d.radius.push_back(6.0 + 0.001 * j);
+        for (int i = 0; i < 10; ++i) {
+            Scan s;
+            for (int j = 0; j < points; ++j)
+                s.values.push_back(float(5.0 * i * (d.radius[std::size_t(j)] - 6.6) + (i >= 3 ? 2 : 0) - (i >= 7 ? 1 : 0)));
+            d.scans.push_back(s);
+        }
+        const FringeAlignment a = analyzeFringeAlignment(d, {});
+        QCOMPARE(a.jumps, std::size_t(2));
+        QVERIFY(near(a.centre, 6.6, 1e-3));
+        // Within ±0.1 cm the scan-to-scan change stays below the threshold: same correction.
+        QVERIFY(a.stableValid);
+        QVERIFY(near(a.stableLo, 6.5, 2e-3));
+        QVERIFY(near(a.stableHi, 6.7, 2e-3));
+        QVERIFY(near(a.stableAlign, 6.6, 1e-4));
+        QVERIFY(a.selfConsistentValid);
+        QVERIFY(near(a.selfConsistent, 6.6, 1e-4));
+        QVERIFY(near(a.suggested, a.stableAlign));
+
+        // Aligned there, the jumps are gone and the first and last scans cross at the alignment.
+        Dataset c = d;
+        QCOMPARE(removeFringeJumps(c, a.suggested, {}), std::size_t(2));
+        QVERIFY(near(crossingRadius(c.radius, c.scans.front().values, c.scans.back().values, 6.6), 6.6, 1e-4));
+        QVERIFY(near(c.scans[5].values[1000], 25.0 * 0.4, 1e-3));
+        QVERIFY(near(c.scans[9].values[1200], 45.0 * 0.6, 1e-3));
+
+        // Aligned far from the isoconcentration point, real changes are taken for jumps.
+        QVERIFY(fringeCorrection(d, 1100, 0.5) != fringeCorrection(d, 600, 0.5));
+    }
+
     void omega2tFit()
     {
         // 50 000 rpm from t0 = 120 s; the first scan is still accelerating (excluded).

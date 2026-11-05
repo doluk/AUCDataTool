@@ -89,6 +89,21 @@ Item {
                     currentIndex: 0
                 }
                 ToolButton {
+                    id: axesButton
+                    text: qsTr("Axes…")
+                    checked: axesPopup.opened
+                    onClicked: if (!axesPopup.closedJustNow()) axesPopup.open()
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Linear/log scale and limits of the axes")
+                    AxisSettings {
+                        id: axesPopup
+                        y: axesButton.height
+                        axes: [{ title: feeder.xTitle, axis: feeder.xAxis },
+                               { title: feeder.zTitle, axis: feeder.zAxis },
+                               { title: feeder.yTitle, axis: feeder.yAxis }]
+                    }
+                }
+                ToolButton {
                     text: qsTr("Reset view")
                     onClicked: {
                         graph.cameraPreset = Graphs3D.CameraPreset.NoPreset
@@ -128,26 +143,37 @@ Item {
                 grid.mainColor: Qt.rgba(root.palette.text.r, root.palette.text.g, root.palette.text.b, 0.35)
             }
 
+            // Each axis has a linear and a log formatter; the axis settings choose between them.
             axisX: Value3DAxis {
+                readonly property Value3DAxisFormatter linear: Value3DAxisFormatter {}
+                readonly property LogValue3DAxisFormatter logarithmic: LogValue3DAxisFormatter { edgeLabelsVisible: false }
+                formatter: feeder.xAxis.log ? logarithmic : linear
                 title: feeder.xTitle
                 titleVisible: true
-                min: feeder.xMin
-                max: feeder.xMax
-                labelFormat: "%.2f"
+                min: feeder.xAxis.min
+                max: feeder.xAxis.max
+                labelFormat: feeder.xAxis.log ? "%.3g" : "%.2f"
             }
             axisY: Value3DAxis {
+                readonly property Value3DAxisFormatter linear: Value3DAxisFormatter {}
+                readonly property LogValue3DAxisFormatter logarithmic: LogValue3DAxisFormatter { edgeLabelsVisible: false }
+                formatter: feeder.yAxis.log ? logarithmic : linear
                 title: feeder.yTitle
                 titleVisible: true
-                min: feeder.yMin
-                max: feeder.yMax
+                min: feeder.yAxis.min
+                max: feeder.yAxis.max
                 labelFormat: "%.3g"
             }
             axisZ: Value3DAxis {
+                readonly property Value3DAxisFormatter linear: Value3DAxisFormatter {}
+                readonly property LogValue3DAxisFormatter logarithmic: LogValue3DAxisFormatter { edgeLabelsVisible: false }
+                formatter: feeder.zAxis.log ? logarithmic : linear
                 title: feeder.zTitle
                 titleVisible: true
-                min: feeder.zMin
-                max: feeder.zMax
-                labelFormat: root.controller.surfaceOmega2t && modeBox.currentIndex === 0 ? "%.2e" : "%.0f"
+                min: feeder.zAxis.min
+                max: feeder.zAxis.max
+                labelFormat: feeder.zAxis.log ? "%.3g"
+                             : root.controller.surfaceOmega2t && modeBox.currentIndex === 0 ? "%.2e" : "%.0f"
             }
 
             Surface3DSeries {
@@ -196,6 +222,9 @@ Item {
                 last = activeTranslation
                 graph.cameraXRotation += d.x * degreesPerPixel
                 graph.cameraYRotation += d.y * degreesPerPixel
+                // In Indirect mode a camera change alone doesn't schedule a frame; without
+                // this the view only redraws when something else repaints the window.
+                graph.update()
             }
         }
     }

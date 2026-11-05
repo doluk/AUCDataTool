@@ -34,10 +34,12 @@ set(auc_qml_files
     qml/ExportDialog.qml
     qml/RunConditionsView.qml
     qml/IconButton.qml
+    qml/AxisSettings.qml
 )
 set(auc_sources
     AppController.h AppController.cpp
     ScanPlot.h ScanPlot.cpp
+    PlotAxis.h
     PlotSeries.h
     SurfaceGrid.h
     CurveStyle.h

@@ -24,15 +24,15 @@ void writeText(const QString& path, const QByteArray& b)
 }
 
 /// One intensity scan with sample = 1000 − 100·i·(r − 6) and reference = 2000 on a
-/// slightly jittered radial grid (as in real XL files).
-QByteArray intensityScan(int cell, int scan, double wavelength, double jitter)
+/// slightly jittered radial grid (as in real XL files), taken `delay` s after 300·i s.
+QByteArray intensityScan(int cell, int scan, double wavelength, double jitter, double delay = 0.0)
 {
     xl::ScanHeader h;
     h.type = DataType::RadialIntensity;
     h.cell = cell;
     h.temperature = 20.0;
     h.rpm = 50000;
-    h.seconds = 300.0 * scan;
+    h.seconds = 300.0 * scan + delay;
     h.omega2t = 8.2e9 * scan;
     h.wavelength = wavelength;
     h.description = QStringLiteral("Test sample");
@@ -186,6 +186,31 @@ private slots:
         QCOMPARE(d->radius, a.wavelengths);
         QCOMPARE(d->scans.size(), std::size_t(3));
         QVERIFY(std::abs(d->scans[0].values[0] - float(1000.0 - 100.0 * (a.radius[50] - 6.0))) < 0.05f);
+    }
+
+    void conditionsPerWavelength()
+    {
+        // XL scans the wavelengths one after another: each has its own scan times.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        for (int scan = 1; scan <= 2; ++scan) {
+            writeText(dir.filePath(QStringLiteral("2A230/A%1.RI2").arg(scan, 5, 10, QLatin1Char('0'))),
+                      intensityScan(2, scan, 230, 0.0));
+            writeText(dir.filePath(QStringLiteral("2A280/A%1.RI2").arg(scan, 5, 10, QLatin1Char('0'))),
+                      intensityScan(2, scan, 280, 0.0, 60.0));
+        }
+        const OpenResult res = openData({dir.path()});
+        QVERIFY(!res.channels.empty());
+        const auto& a = *res.channels[0];
+        QCOMPARE(a.wavelengths, (std::vector<double>{230, 280}));
+        std::shared_ptr<const Dataset> d;
+        QVERIFY(a.wavelengthSlice(0, d).ok());
+        QCOMPARE(d->scans[1].seconds, 600.0);
+        QVERIFY(a.wavelengthSlice(1, d).ok());
+        QCOMPARE(d->scans[0].seconds, 360.0);
+        QCOMPARE(d->scans[1].seconds, 660.0);
+        QVERIFY(a.wavelengthMean(0, 2, d).ok());  // MWA: mean of both
+        QCOMPARE(d->scans[1].seconds, 630.0);
     }
 
     void exportRoundTrips()

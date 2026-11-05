@@ -11,6 +11,7 @@
 #include "auc/Dataset.h"
 #include "auc/FolderWatcher.h"
 #include "auc/Noise.h"
+#include "auc/Processing.h"
 
 #include <QFutureWatcher>
 #include <QObject>
@@ -51,12 +52,19 @@ struct ChannelSettings {
 
 /// Processing options shared by all channels. Order of application: wavelength slice →
 /// dark current → absorbance vs. reference → noise → scan selection → reverse → spike
-/// filter → offset → integration.
+/// filter → offset (air–air jitter correction for interference) → fringe jumps
+/// (interference only) → integration.
 struct ProcessingOptions {
     bool reverse = false;
     bool removeSpikes = false;
     enum OffsetMode { OffsetNone, OffsetPoint, OffsetRegion } offsetMode = OffsetNone;
     double offsetR1 = 0.0, offsetR2 = 0.0;
+    bool fringeJumps = false;
+    double fringeAlign = 0.0;       ///< cm; ≤ 0 = the suggestion of analyzeFringeAlignment()
+    double fringeThreshold = 0.5;   ///< fringes
+    /// cm, meniscus and cell bottom; r2 ≤ r1 = from the end of the air–air baseline region
+    /// (offset mode "region") to the last point, else the whole scan.
+    double fringeR1 = 0.0, fringeR2 = 0.0;
     int firstScan = 0, lastScan = -1, everyNth = 1;
     bool integrate = false;
     double intR1 = 0.0, intR2 = 0.0;
@@ -110,6 +118,8 @@ class AppController : public QObject {
     Q_PROPERTY(bool hasSpectra READ hasSpectra NOTIFY datasetChanged)
     Q_PROPERTY(bool dataIsAbsorbance READ dataIsAbsorbance NOTIFY datasetChanged)
     Q_PROPERTY(bool hasDarkCurrent READ hasDarkCurrent NOTIFY datasetChanged)
+    /// Rayleigh interference data (fringe-jump correction applies).
+    Q_PROPERTY(bool isInterference READ isInterference NOTIFY datasetChanged)
 
     // Wavelength (per channel)
     Q_PROPERTY(int wavelengthCount READ wavelengthCount NOTIFY datasetChanged)
@@ -140,6 +150,15 @@ class AppController : public QObject {
     Q_PROPERTY(int offsetMode MEMBER m_optOffsetMode NOTIFY optionsChanged)
     Q_PROPERTY(double offsetR1 MEMBER m_optOffsetR1 NOTIFY optionsChanged)
     Q_PROPERTY(double offsetR2 MEMBER m_optOffsetR2 NOTIFY optionsChanged)
+    Q_PROPERTY(bool fringeJumps MEMBER m_optFringe NOTIFY optionsChanged)
+    Q_PROPERTY(double fringeAlign MEMBER m_optFringeAlign NOTIFY optionsChanged)
+    Q_PROPERTY(double fringeThreshold MEMBER m_optFringeThreshold NOTIFY optionsChanged)
+    Q_PROPERTY(double fringeR1 MEMBER m_optFringeR1 NOTIFY optionsChanged)
+    Q_PROPERTY(double fringeR2 MEMBER m_optFringeR2 NOTIFY optionsChanged)
+    /// Result of the fringe-jump correction of the current channel: valid, alignment (used),
+    /// iso and isoFringes (first/last-scan crossing and its value), jumps, centre, stableValid,
+    /// stableLo, stableHi, stableAlign (route A), selfConsistentValid, selfConsistent (route B).
+    Q_PROPERTY(QVariantMap fringeInfo READ fringeInfo NOTIFY fringeInfoChanged)
     Q_PROPERTY(int firstScan MEMBER m_optFirst NOTIFY optionsChanged)
     Q_PROPERTY(int lastScan MEMBER m_optLast NOTIFY optionsChanged)
     Q_PROPERTY(int everyNth MEMBER m_optNth NOTIFY optionsChanged)
@@ -207,6 +226,8 @@ public:
     bool hasSpectra() const;
     bool dataIsAbsorbance() const;
     bool hasDarkCurrent() const;
+    bool isInterference() const;
+    QVariantMap fringeInfo() const { return m_fringeInfo; }
 
     int wavelengthCount() const;
     double wavelengthMin() const;
@@ -302,6 +323,7 @@ signals:
     void optionsChanged();
     void noiseChanged();
     void processingErrorChanged();
+    void fringeInfoChanged();
     void processed(double milliseconds);
 
 private:
@@ -338,6 +360,7 @@ private:
         double ms = 0.0;
         bool keepView = false;
         bool spectrumDeferred = false;
+        QVariantMap fringe;  ///< see fringeInfo; empty if the correction did not run
         QString error;      ///< processing could not run (nothing shown)
         QString warning;    ///< ran, but something was skipped (noise, scans)
     };
@@ -365,6 +388,7 @@ private:
     int m_current = -1;
     QString m_status;
     QString m_processingError;
+    QVariantMap m_fringeInfo;
     bool m_busy = false;
     quint64 m_generation = 0;
     bool m_pending = false;
@@ -390,6 +414,10 @@ private:
     bool m_optSpikes = false;
     int m_optOffsetMode = 0;
     double m_optOffsetR1 = 0.0, m_optOffsetR2 = 0.0;
+    bool m_optFringe = false;
+    double m_optFringeAlign = 0.0;
+    double m_optFringeThreshold = 0.5;
+    double m_optFringeR1 = 0.0, m_optFringeR2 = 0.0;
     int m_optFirst = 0, m_optLast = -1, m_optNth = 1;
     bool m_optIntegrate = false;
     double m_optIntR1 = 0.0, m_optIntR2 = 0.0;

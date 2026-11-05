@@ -84,6 +84,64 @@ void makeTicks(double lo, double hi, int target, std::vector<double>& pos, QVari
     }
 }
 
+/// Label of a log-axis tick: "0.01", "200", "1e6".
+QString logTickLabel(double v)
+{
+    QString t = QString::number(v, 'g', 3);
+    t.replace(QLatin1String("e+0"), QLatin1String("e")).replace(QLatin1String("e+"), QLatin1String("e"));
+    t.replace(QLatin1String("e-0"), QLatin1String("e-"));
+    return t;
+}
+
+/// Ticks of a logarithmic axis over the axis coordinates [lo, hi] (log10); `pos` gets the
+/// values. Decades (every n-th when there are many), with 2 and 5 between them when there
+/// is room; below one decade the linear ticks of the values.
+void makeLogTicks(double lo, double hi, int target, std::vector<double>& pos, QVariantList& labels)
+{
+    pos.clear();
+    labels.clear();
+    if (!(hi > lo) || !std::isfinite(lo) || !std::isfinite(hi)) return;
+    const double decades = hi - lo;
+    if (decades < 1.0) {
+        makeTicks(std::pow(10.0, lo), std::pow(10.0, hi), target, pos, labels);
+        return;
+    }
+    const int every = std::max(1, int(std::ceil(decades / std::max(target, 1))));
+    std::vector<double> mult{1};
+    if (decades * 3 <= target) mult = {1, 2, 5};
+    else if (decades * 2 <= target) mult = {1, 3};
+    const int first = int(std::floor(std::floor(lo) / every)) * every;
+    for (int e = first; e <= int(std::ceil(hi)); e += every) {
+        for (double m : mult) {
+            const double t = e + std::log10(m);
+            if (t < lo - 1e-9 || t > hi + 1e-9) continue;
+            const double v = m * std::pow(10.0, e);
+            pos.push_back(v);
+            QVariantMap mm;
+            mm.insert(QStringLiteral("value"), v);
+            mm.insert(QStringLiteral("label"), logTickLabel(v));
+            labels.push_back(mm);
+        }
+    }
+}
+
+/// Autoscaled log axes span at most this many decades when the data reaches 0 or below:
+/// noise around 0 would otherwise squeeze everything else into the top of the plot.
+constexpr double kLogDecades = 3;
+
+/// Makes [lo, hi] a valid range; a locked end stays where it is.
+void fixSpan(double& lo, double& hi, bool loLocked, bool hiLocked)
+{
+    if (hi > lo) return;
+    if (loLocked && !hiLocked) hi = lo + 1.0;
+    else if (hiLocked && !loLocked) lo = hi - 1.0;
+    else {
+        const double c = (lo + hi) / 2;
+        lo = c - 0.5;
+        hi = c + 0.5;
+    }
+}
+
 /// The scene graph addresses at most 65 535 vertices per geometry, so curves are split
 /// over several nodes. Each holds an even number of vertices (whole line segments).
 constexpr int kMaxVerticesPerNode = 65534;
@@ -263,6 +321,64 @@ ScanPlot::ScanPlot(QQuickItem* parent)
 {
     setFlag(ItemHasContents, true);
     setClip(true);
+    m_xAxis = new PlotAxis(this);
+    m_yAxis = new PlotAxis(this);
+    for (PlotAxis* a : {m_xAxis, m_yAxis}) {
+        connect(a, &PlotAxis::logChanged, this, [this, a] { axisLogChanged(a); });
+        connect(a, &PlotAxis::limitEdited, this, [this, a](bool upper) { axisLimitEdited(a, upper); });
+        connect(a, &PlotAxis::locksChanged, this, [this] {
+            if (m_autoscaleContinuous) autoscale();
+        });
+    }
+    syncAxes();
+}
+
+void ScanPlot::setAutoscaleContinuous(bool on)
+{
+    if (on == m_autoscaleContinuous) return;
+    m_autoscaleContinuous = on;
+    emit autoscaleContinuousChanged();
+    if (on) autoscale();
+}
+
+void ScanPlot::syncAxes()
+{
+    m_xAxis->setRange(fromAxis(m_xAxis->log(), m_view.left()), fromAxis(m_xAxis->log(), m_view.right()));
+    m_yAxis->setRange(fromAxis(m_yAxis->log(), m_view.top()), fromAxis(m_yAxis->log(), m_view.bottom()));
+}
+
+void ScanPlot::axisLogChanged(PlotAxis* axis)
+{
+    // Same limits in the new axis coordinates; a log axis starts above 0.
+    const bool isX = axis == m_xAxis;
+    const bool log = axis->log();
+    double lo = fromAxis(!log, isX ? m_view.left() : m_view.top());
+    double hi = fromAxis(!log, isX ? m_view.right() : m_view.bottom());
+    m_dataDirty = m_styledDirty = m_gridDirty = true;
+    if (log && !(lo > 0)) lo = hi > 0 ? hi * 1e-3 : 0.0;
+    lo = toAxis(log, lo);
+    hi = toAxis(log, hi);
+    if (m_autoscaleContinuous || !std::isfinite(lo) || !std::isfinite(hi) || !(hi > lo)) {
+        autoscale();
+    } else {
+        QRectF v = m_view;
+        if (isX) v.setLeft(lo), v.setRight(hi);
+        else v.setTop(lo), v.setBottom(hi);
+        setViewRect(v);
+    }
+    updateTicks();  // also when the axis coordinates happen to stay the same
+    syncAxes();
+    update();
+}
+
+void ScanPlot::axisLimitEdited(PlotAxis* axis, bool upper)
+{
+    const double t = toAxis(axis->log(), upper ? axis->maxLimit() : axis->minLimit());
+    if (!std::isfinite(t)) return;
+    QRectF v = m_view;
+    if (axis == m_xAxis) upper ? v.setRight(t) : v.setLeft(t);
+    else upper ? v.setBottom(t) : v.setTop(t);
+    setViewRect(v);
 }
 
 void ScanPlot::setSeries(PlotSeriesPtr series, bool keepView)
@@ -285,7 +401,7 @@ void ScanPlot::setSeries(PlotSeriesPtr series, bool keepView)
     if (m_selected >= 0 && curveIndex(m_selected) < 0) m_selected = -1;
     emit dataChanged();
     emit stylesChanged();
-    if (!keepView || !hadData)
+    if (!keepView || !hadData || m_autoscaleContinuous)
         autoscale();
     else
         update();
@@ -297,6 +413,7 @@ void ScanPlot::setViewRect(const QRectF& r)
     m_view = r;
     m_gridDirty = m_styledDirty = true;
     updateTicks();
+    syncAxes();
     emit viewRectChanged();
     update();
 }
@@ -461,11 +578,12 @@ int ScanPlot::curveAt(double px, double py) const
         const std::size_t end = std::min(i1, ys.size());
         double d = std::numeric_limits<double>::max();
         for (std::size_t j = i0; j < end; ++j) {
-            if (!std::isfinite(ys[j])) continue;
-            const QPointF a(toPixelX(xs[j]), toPixelY(ys[j]));
+            const QPointF a(toPixelX(xs[j]), toPixelY(ys[j]));  // NaN: missing, or <= 0 on a log axis
+            if (!std::isfinite(a.x()) || !std::isfinite(a.y())) continue;
             if (s.marker || s.line == CurveStyle::NoLine) d = std::min(d, std::hypot(a.x() - px, a.y() - py));
-            if (s.line != CurveStyle::NoLine && j + 1 < end && std::isfinite(ys[j + 1]))
-                d = std::min(d, distanceToSegment(p, a, QPointF(toPixelX(xs[j + 1]), toPixelY(ys[j + 1]))));
+            if (s.line == CurveStyle::NoLine || j + 1 >= end) continue;
+            const QPointF b(toPixelX(xs[j + 1]), toPixelY(ys[j + 1]));
+            if (std::isfinite(b.x()) && std::isfinite(b.y())) d = std::min(d, distanceToSegment(p, a, b));
         }
         if (d <= reach && d < bestDist) {
             bestDist = d;
@@ -481,7 +599,7 @@ void ScanPlot::buildStyledVertices()
     out.clear();
     if (!hasData()) return;
     const auto& xs = m_series->x;
-    const auto [i0, i1] = visibleRange(m_view.left(), m_view.right());
+    const auto [i0, i1] = visibleRange(fromAxis(m_xAxis->log(), m_view.left()), fromAxis(m_xAxis->log(), m_view.right()));
 
     std::vector<std::size_t> order;
     std::size_t selected = std::size_t(-1);
@@ -505,15 +623,17 @@ void ScanPlot::buildStyledVertices()
         // A NaN breaks the line (stored as a NaN point).
         pts.clear();
         QPointF last(std::numeric_limits<double>::quiet_NaN(), 0);
+        auto pixel = [&](std::size_t j) { return QPointF(toPixelX(xs[j]), toPixelY(ys[j])); };
+        auto valid = [](QPointF q) { return std::isfinite(q.x()) && std::isfinite(q.y()); };
         for (std::size_t j = i0; j < end; ++j) {
-            if (!std::isfinite(ys[j])) {
+            const QPointF q = pixel(j);  // NaN: missing, or <= 0 on a log axis
+            if (!valid(q)) {
                 if (!pts.empty() && std::isfinite(pts.back().x()))
                     pts.emplace_back(std::numeric_limits<double>::quiet_NaN(), 0);
                 last.setX(std::numeric_limits<double>::quiet_NaN());
                 continue;
             }
-            const QPointF q(toPixelX(xs[j]), toPixelY(ys[j]));
-            const bool runEnd = j + 1 == end || !std::isfinite(ys[j + 1]);
+            const bool runEnd = j + 1 == end || !valid(pixel(j + 1));
             if (std::isfinite(last.x()) && !runEnd
                 && std::abs(q.x() - last.x()) + std::abs(q.y() - last.y()) < 0.75)
                 continue;
@@ -556,23 +676,76 @@ void ScanPlot::buildStyledVertices()
 
 void ScanPlot::autoscale()
 {
-    if (!m_series) return;
-    const double padY = 0.04 * (m_series->yMax - m_series->yMin);
-    setViewRect(QRectF(m_series->xMin, m_series->yMin - padY, m_series->xMax - m_series->xMin,
-                       m_series->yMax - m_series->yMin + 2 * padY));
+    if (!hasData()) return;
+    constexpr double inf = std::numeric_limits<double>::infinity();
+    const bool lx = m_xAxis->log(), ly = m_yAxis->log();
+    // A locked limit in axis coordinates; NaN if not locked (or not valid on this scale).
+    auto locked = [](const PlotAxis* ax, bool upper) {
+        const bool on = upper ? ax->maxLocked() : ax->minLocked();
+        return on ? toAxis(ax->log(), upper ? ax->maxLimit() : ax->minLimit()) : std::numeric_limits<double>::quiet_NaN();
+    };
+
+    const double lockX0 = locked(m_xAxis, false), lockX1 = locked(m_xAxis, true);
+    double x0 = inf, x1 = -inf;
+    if (!std::isfinite(lockX0) || !std::isfinite(lockX1)) {
+        bool nonPositive = false;
+        for (float v : m_series->x) {
+            const double t = toAxis(lx, v);
+            if (std::isfinite(t)) x0 = std::min(x0, t), x1 = std::max(x1, t);
+            nonPositive |= v <= 0;
+        }
+        if (x0 > x1) x0 = 0, x1 = 1;
+        if (lx && nonPositive) x0 = std::max(x0, x1 - kLogDecades);
+    }
+    if (std::isfinite(lockX0)) x0 = lockX0;
+    if (std::isfinite(lockX1)) x1 = lockX1;
+    fixSpan(x0, x1, std::isfinite(lockX0), std::isfinite(lockX1));
+
+    // y: the visible curves' points inside the x range.
+    const double lockY0 = locked(m_yAxis, false), lockY1 = locked(m_yAxis, true);
+    double y0 = inf, y1 = -inf;
+    if (!std::isfinite(lockY0) || !std::isfinite(lockY1)) {
+        bool nonPositive = false;
+        const double r0 = fromAxis(lx, x0), r1 = fromAxis(lx, x1);
+        const auto [i0, i1] = visibleRange(r0, r1);
+        const auto& xs = m_series->x;
+        for (std::size_t c = 0; c < m_series->y.size(); ++c) {
+            if (!resolvedStyle(c).visible) continue;
+            const auto& ys = m_series->y[c];
+            const std::size_t end = std::min(i1, ys.size());
+            for (std::size_t j = i0; j < end; ++j) {
+                if (!(xs[j] >= r0 && xs[j] <= r1)) continue;
+                const double t = toAxis(ly, ys[j]);
+                if (std::isfinite(t)) y0 = std::min(y0, t), y1 = std::max(y1, t);
+                nonPositive |= ys[j] <= 0;
+            }
+        }
+        if (y0 > y1) y0 = 0, y1 = 1;
+        if (ly && nonPositive) y0 = std::max(y0, y1 - kLogDecades);
+        const double pad = 0.04 * (y1 - y0);
+        y0 -= pad;
+        y1 += pad;
+    }
+    if (std::isfinite(lockY0)) y0 = lockY0;
+    if (std::isfinite(lockY1)) y1 = lockY1;
+    fixSpan(y0, y1, std::isfinite(lockY0), std::isfinite(lockY1));
+
+    setViewRect(QRectF(x0, y0, x1 - x0, y1 - y0));
 }
 
-double ScanPlot::toDataX(double px) const { return m_view.left() + px / std::max(width(), 1.0) * m_view.width(); }
-double ScanPlot::toDataY(double py) const
+double ScanPlot::axisX(double px) const { return m_view.left() + px / std::max(width(), 1.0) * m_view.width(); }
+double ScanPlot::axisY(double py) const { return m_view.top() + (1.0 - py / std::max(height(), 1.0)) * m_view.height(); }
+double ScanPlot::toDataX(double px) const { return fromAxis(m_xAxis->log(), axisX(px)); }
+double ScanPlot::toDataY(double py) const { return fromAxis(m_yAxis->log(), axisY(py)); }
+double ScanPlot::toPixelX(double x) const { return (toAxis(m_xAxis->log(), x) - m_view.left()) / m_view.width() * width(); }
+double ScanPlot::toPixelY(double y) const
 {
-    return m_view.top() + (1.0 - py / std::max(height(), 1.0)) * m_view.height();
+    return (1.0 - (toAxis(m_yAxis->log(), y) - m_view.top()) / m_view.height()) * height();
 }
-double ScanPlot::toPixelX(double x) const { return (x - m_view.left()) / m_view.width() * width(); }
-double ScanPlot::toPixelY(double y) const { return (1.0 - (y - m_view.top()) / m_view.height()) * height(); }
 
 void ScanPlot::zoomAt(double px, double py, double fx, double fy)
 {
-    const double cx = toDataX(px), cy = toDataY(py);
+    const double cx = axisX(px), cy = axisY(py);
     const double w = m_view.width() / fx, h = m_view.height() / fy;
     const double tx = px / std::max(width(), 1.0), ty = 1.0 - py / std::max(height(), 1.0);
     setViewRect(QRectF(cx - tx * w, cy - ty * h, w, h));
@@ -588,8 +761,8 @@ void ScanPlot::panByPixels(double dx, double dy)
 void ScanPlot::zoomToPixelRect(double x1, double y1, double x2, double y2)
 {
     if (std::abs(x2 - x1) < 4 || std::abs(y2 - y1) < 4) return;
-    const double a = toDataX(std::min(x1, x2)), b = toDataX(std::max(x1, x2));
-    const double c = toDataY(std::max(y1, y2)), d = toDataY(std::min(y1, y2));
+    const double a = axisX(std::min(x1, x2)), b = axisX(std::max(x1, x2));
+    const double c = axisY(std::max(y1, y2)), d = axisY(std::min(y1, y2));
     setViewRect(QRectF(a, c, b - a, d - c));
 }
 
@@ -607,8 +780,10 @@ void ScanPlot::updateTicks()
 {
     const int tx = std::clamp(int(width() / 90.0), 2, 12);
     const int ty = std::clamp(int(height() / 60.0), 2, 10);
-    makeTicks(m_view.left(), m_view.right(), tx, m_xTickPos, m_xTicks);
-    makeTicks(m_view.top(), m_view.bottom(), ty, m_yTickPos, m_yTicks);
+    if (m_xAxis->log()) makeLogTicks(m_view.left(), m_view.right(), tx, m_xTickPos, m_xTicks);
+    else makeTicks(m_view.left(), m_view.right(), tx, m_xTickPos, m_xTicks);
+    if (m_yAxis->log()) makeLogTicks(m_view.top(), m_view.bottom(), ty, m_yTickPos, m_yTicks);
+    else makeTicks(m_view.top(), m_view.bottom(), ty, m_yTickPos, m_yTicks);
     emit ticksChanged();
 }
 
@@ -661,7 +836,11 @@ QSGNode* ScanPlot::updatePaintNode(QSGNode* old, UpdatePaintNodeData*)
             room = n;
         };
         if (total) {
-            const auto& xs = m_series->x;
+            // Vertices in axis coordinates (log10 on a log axis).
+            const bool lx = m_xAxis->log(), ly = m_yAxis->log();
+            std::vector<float> xs(m_series->x.size());
+            for (std::size_t j = 0; j < xs.size(); ++j) xs[j] = float(toAxis(lx, m_series->x[j]));
+            auto ty = [ly](float y) { return ly ? float(toAxis(true, y)) : y; };
             for (std::size_t c = 0; c < m_series->y.size(); ++c) {
                 if (!fast[c]) continue;
                 const auto& ys = m_series->y[c];
@@ -669,13 +848,18 @@ QSGNode* ScanPlot::updatePaintNode(QSGNode* old, UpdatePaintNodeData*)
                 const uchar r = uchar(col.red()), gr = uchar(col.green()), b = uchar(col.blue());
                 for (std::size_t j = 1; j < xs.size(); ++j) {
                     if (room == 0) nextNode();
-                    // NaN segments (e.g. masked points) collapse to a degenerate line.
-                    float y0 = j - 1 < ys.size() ? ys[j - 1] : 0.f;
-                    float y1 = j < ys.size() ? ys[j] : 0.f;
-                    if (!std::isfinite(y0)) y0 = std::isfinite(y1) ? y1 : 0.f;
-                    if (!std::isfinite(y1)) y1 = y0;
-                    (v++)->set(xs[j - 1], y0, r, gr, b, 255);
-                    (v++)->set(xs[j], y1, r, gr, b, 255);
+                    // A segment with a missing end (NaN, e.g. masked, or <= 0 on a log axis)
+                    // collapses to a degenerate line.
+                    float x0 = xs[j - 1], x1 = xs[j];
+                    float y0 = j - 1 < ys.size() ? ty(ys[j - 1]) : 0.f;
+                    float y1 = j < ys.size() ? ty(ys[j]) : 0.f;
+                    const bool ok0 = std::isfinite(x0) && std::isfinite(y0);
+                    const bool ok1 = std::isfinite(x1) && std::isfinite(y1);
+                    if (!ok0 && !ok1) x0 = x1 = y0 = y1 = 0.f;
+                    else if (!ok0) x0 = x1, y0 = y1;
+                    else if (!ok1) x1 = x0, y1 = y0;
+                    (v++)->set(x0, y0, r, gr, b, 255);
+                    (v++)->set(x1, y1, r, gr, b, 255);
                     room -= 2;
                     remaining -= 2;
                 }
