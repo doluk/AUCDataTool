@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Lukas Dobler -->
+<!-- SPDX-License-Identifier: CC0-1.0 -->
+<!-- AppStream metadata (software centres, Flathub). Add a <release> for every version. -->
+<component type="desktop-application">
+  <id>io.github.doluk.AUCDataTool</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LGPL-3.0-or-later</project_license>
+
+  <name>AUCDataTool</name>
+  <summary>View analytical ultracentrifugation raw data</summary>
+  <developer id="io.github.doluk">
+    <name>Lukas Dobler</name>
+  </developer>
+
+  <description>
+    <p>
+      AUCDataTool opens the raw data of analytical ultracentrifugation (AUC) experiments and
+      shows the scans of every cell and channel, the run conditions and the timing of the
+      scans. It is a reimplementation of the AUC-Viewer of AG Cölfen, University of Konstanz.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Reads openAUC/UltraScan .auc files, Beckman XL-A/XL-I and Optima exports, and multi-wavelength .mwrs and .mw data</li>
+      <li>Absorbance from intensity against a reference channel or a radial region, wavelength averaging and spectra</li>
+      <li>Fringe-jump correction for interference data</li>
+      <li>Run conditions: rotor speed, temperature and ω²t of every scan</li>
+      <li>Scan timing: intervals between scans, skipped cells and detector sweep logs</li>
+      <li>Follows a folder while a run is recorded</li>
+      <li>3D surface view, export to CSV, Origin, Beckman XL and UltraScan .auc, printing</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.doluk.AUCDataTool.desktop</launchable>
+  <provides>
+    <binary>AUCDataTool</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/doluk/AUCDataTool</url>
+  <url type="bugtracker">https://github.com/doluk/AUCDataTool/issues</url>
+  <url type="vcs-browser">https://github.com/doluk/AUCDataTool</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>A multi-wavelength run: absorbance against the reference channel</caption>
+      <image>https://raw.githubusercontent.com/doluk/AUCDataTool/main/docs/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#93c5fd</color>
+    <color type="primary" scheme_preference="dark">#1e3a8a</color>
+  </branding>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.2.1" date="2026-11-23">
+      <description>
+        <p>Linux: packages for older distributions (glibc 2.28), native Wayland, a launcher and an icon. Windows: application icon.</p>
+      </description>
+    </release>
+    <release version="0.2.0" date="2026-11-23">
+      <description>
+        <p>Scan timing analysis, detector sweep logs, automatic fringe-jump limits and a reworked interface.</p>
+      </description>
+    </release>
+    <release version="0.1.1" date="2026-11-06"/>
+    <release version="0.1.0" date="2026-10-05"/>
+  </releases>
+</component>

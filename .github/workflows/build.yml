@@ -72,6 +72,25 @@ jobs:
             build-el8/package/*.tar.gz
           if-no-files-found: error
 
+  flatpak:
+    # Flatpak bundle against the KDE runtime (packaging/flatpak). Installs with
+    # `flatpak install AUCDataTool-x86_64.flatpak`; the runtime comes from Flathub.
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.11
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate AppStream metadata
+        run: appstreamcli validate --no-net app/linux/io.github.doluk.AUCDataTool.metainfo.xml
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: AUCDataTool-x86_64.flatpak
+          manifest-path: packaging/flatpak/io.github.doluk.AUCDataTool.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+
   android:
     # APK for arm64-v8a, built with Qt for Android. Signed with the keystore from the
     # ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS secrets if set,
@@ -182,7 +201,7 @@ jobs:
   release:
     # Attach the installers to a GitHub release when a version tag (v*) is pushed.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, linux, android, arch]
+    needs: [build, linux, flatpak, android, arch]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

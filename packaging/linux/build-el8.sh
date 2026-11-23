@@ -21,7 +21,7 @@ dnf -y -q install gcc-toolset-13-gcc-c++ gcc-toolset-13-binutils \
     python3.11 python3.11-pip rpm-build dpkg desktop-file-utils file findutils \
     mesa-libGL-devel mesa-libEGL-devel libxkbcommon-devel libxkbcommon-x11 fontconfig freetype \
     dbus-libs libX11 libX11-xcb libxcb xcb-util-cursor xcb-util-wm xcb-util-image \
-    xcb-util-keysyms xcb-util-renderutil
+    xcb-util-keysyms xcb-util-renderutil wayland-devel libwayland-cursor libwayland-egl
 
 # A current CMake and Ninja (EL8 ships CMake 3.26, Ninja only in PowerTools).
 python3.11 -m pip install -q aqtinstall cmake ninja
@@ -57,6 +57,12 @@ glibcxx=$(newest GLIBCXX_ "$symbols")
 echo "newest symbol versions: GLIBC_$glibc GLIBCXX_$glibcxx"
 [ "$(printf '%s\n2.28\n' "$glibc" | sort -V | tail -n1)" = "2.28" ] || { echo "needs glibc > 2.28"; exit 1; }
 [ "$(printf '%s\n3.4.25\n' "$glibcxx" | sort -V | tail -n1)" = "3.4.25" ] || { echo "needs GLIBCXX > 3.4.25"; exit 1; }
+
+# Both platform plugins: Wayland (with the xdg-shell integration) and X11.
+for p in platforms/libqxcb.so platforms/libqwayland-generic.so platforms/libqwayland-egl.so \
+         wayland-shell-integration/libxdg-shell.so; do
+    find "$check" -path "*/plugins/$p" | grep . > /dev/null || { echo "missing plugin $p"; exit 1; }
+done
 
 # Desktop integration in the packages.
 dpkg-deb -c "$BUILD"/package/*.deb | grep 'share/applications/io.github.doluk.AUCDataTool.desktop' > /dev/null

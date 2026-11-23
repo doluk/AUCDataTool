@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2026 Lukas Dobler
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# Flatpak build against the KDE runtime's Qt (native Wayland, X11 fallback).
+#   flatpak-builder --user --install --force-clean build-flatpak packaging/flatpak/io.github.doluk.AUCDataTool.yml
+#   flatpak run io.github.doluk.AUCDataTool
+# For Flathub, the source becomes `type: git` with the release tag and commit.
+id: io.github.doluk.AUCDataTool
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+command: AUCDataTool
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Runs are folders of many scan files that are opened as a whole and watched while the
+  # instrument writes them (live mode); the file chooser portal only grants single files.
+  # Flathub's linter flags home access: a submission needs an exception for it.
+  - --filesystem=home
+  - --filesystem=/media
+  - --filesystem=/run/media
+  - --filesystem=/mnt
+
+cleanup:
+  - /include
+  - /lib/cmake
+
+modules:
+  - name: aucdatatool
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DAUC_DEPLOY_QT=OFF
+      - -DAUC_BUILD_TESTS=OFF
+      - -DAUC_BUILD_TOOLS=OFF
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - build
+          - build-el8
+          - build-flatpak
+          - .flatpak-builder
+          - cmake-build-debug
+          - cmake-build-release

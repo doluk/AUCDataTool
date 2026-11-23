@@ -76,3 +76,6 @@ CMakeLists.txt.user*
 .idea/
 *.autosave
 compile_commands.json
+
+# Flatpak
+.flatpak-builder/

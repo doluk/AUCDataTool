@@ -137,6 +137,8 @@ if(UNIX AND NOT APPLE)
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES linux/io.github.doluk.AUCDataTool.svg
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+    install(FILES linux/io.github.doluk.AUCDataTool.metainfo.xml
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 endif()
 
 # Bundle Qt libraries, plugins and QML imports next to the executable at install time
@@ -144,6 +146,19 @@ endif()
 # Distribution packages that depend on system Qt set AUC_DEPLOY_QT=OFF.
 option(AUC_DEPLOY_QT "Bundle the Qt runtime on install" ON)
 if(AUC_DEPLOY_QT)
+    # Linux: Wayland next to X11. Qt deploys only default plugins, and only xcb is a default
+    # platform plugin; the Wayland shell, decoration and buffer plugins belong to WaylandClient.
+    # Qt then picks Wayland or X11 to match the session.
+    if(UNIX AND NOT APPLE)
+        find_package(Qt6 QUIET COMPONENTS WaylandClient)
+        if(TARGET Qt6::WaylandClient)
+            target_link_libraries(aucdatatool PRIVATE Qt6::WaylandClient)
+            qt_import_plugins(aucdatatool INCLUDE
+                Qt6::QWaylandIntegrationPlugin Qt6::QWaylandEglPlatformIntegrationPlugin)
+        else()
+            message(WARNING "Qt WaylandClient not found: the bundle runs on X11/XWayland only")
+        endif()
+    endif()
     # Qt 6.4 names the output argument FILENAME_VARIABLE (OUTPUT_SCRIPT since 6.5).
     if(Qt6_VERSION VERSION_LESS 6.5)
         set(deploy_output FILENAME_VARIABLE)

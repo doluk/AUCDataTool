@@ -36,7 +36,7 @@ else()
     # with system Qt; the tarball is relocatable.
     set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_LIST_DIR}/CPackOptions.cmake")
 
-    # Runtime requirements of the bundled Qt xcb platform plugin.
+    # Runtime requirements of the bundled Qt xcb and Wayland platform plugins.
     # Launcher, icon and command linked from /opt into /usr (see app/linux/postinst).
     set(_auc_linux "${PROJECT_SOURCE_DIR}/app/linux")
     set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${_auc_linux}/postinst;${_auc_linux}/prerm")
@@ -50,7 +50,8 @@ else()
         "libgl1, libegl1, libfontconfig1, libfreetype6, libdbus-1-3, libxkbcommon0, \
 libxkbcommon-x11-0, libx11-xcb1, libxcb1, libxcb-cursor0, libxcb-icccm4, libxcb-image0, \
 libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libxcb-shape0, libxcb-sync1, \
-libxcb-xfixes0, libxcb-xinerama0, libxcb-xkb1")
+libxcb-xfixes0, libxcb-xinerama0, libxcb-xkb1, \
+libwayland-client0, libwayland-cursor0, libwayland-egl1")
 
     set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
     set(CPACK_RPM_PACKAGE_LICENSE "LGPL-3.0-or-later")
@@ -60,7 +61,7 @@ libxcb-xfixes0, libxcb-xinerama0, libxcb-xkb1")
     set(CPACK_RPM_PACKAGE_REQUIRES
         "libglvnd-opengl, libglvnd-glx, libglvnd-egl, fontconfig, freetype, dbus-libs, libxkbcommon, \
 libxkbcommon-x11, libX11-xcb, libxcb, xcb-util-cursor, xcb-util-wm, xcb-util-image, \
-xcb-util-keysyms, xcb-util-renderutil")
+xcb-util-keysyms, xcb-util-renderutil, libwayland-client, libwayland-cursor, libwayland-egl")
     set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /opt)
     set(CPACK_RPM_SPEC_MORE_DEFINE "%define debug_package %{nil}")
 endif()

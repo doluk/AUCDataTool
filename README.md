@@ -59,9 +59,29 @@ Options: `-DAUC_BUILD_APP=OFF` builds only the core library, tools and tests (ne
 `cpack --config build/CPackConfig.cmake -C Release -B build/package` bundles Qt and produces
 an NSIS installer (`.exe`, Windows), a disk image (`.dmg`, macOS) or `.deb`, `.rpm` (both install
 to `/opt/AUCDataTool`) and a relocatable `.tar.gz` (Linux; Linux deployment needs Qt ≥ 6.5).
-An Arch Linux package built against system Qt comes from `cd packaging/arch && makepkg -s`.
 CI builds all of these for every push as
 workflow artifacts and attaches them to a GitHub release when a `v*` tag is pushed.
+
+Linux packages:
+
+| Package | Built by | Notes |
+|---|---|---|
+| Flatpak (`.flatpak` bundle) | `packaging/flatpak/io.github.doluk.AUCDataTool.yml` | KDE runtime, sandboxed with access to home, `/media`, `/run/media` and `/mnt`; the runtime comes from Flathub |
+| `.deb`, `.rpm`, `.tar.gz` (Qt bundled) | `packaging/linux/build-el8.sh` in an AlmaLinux 8 container | glibc ≥ 2.28 (RHEL/Rocky/Alma 8, Debian 10, Ubuntu 18.10 and newer) |
+| Arch (`.pkg.tar.zst`, system Qt) | `cd packaging/arch && makepkg -s` | |
+
+All of them run natively on Wayland and on X11, and install a launcher
+(`io.github.doluk.AUCDataTool.desktop`), an icon and AppStream metadata. The `.deb`/`.rpm`
+link the launcher, icon and `/usr/bin/AUCDataTool` from `/opt/AUCDataTool` into `/usr`.
+
+```sh
+# Bundled-Qt packages, locally with Docker (output in build-el8/package/)
+docker run --rm -v "$PWD":/src -w /src almalinux:8 bash packaging/linux/build-el8.sh
+# Flatpak
+flatpak-builder --user --install --force-clean build-flatpak packaging/flatpak/io.github.doluk.AUCDataTool.yml
+```
+
+Every release needs a `<release>` entry in `app/linux/io.github.doluk.AUCDataTool.metainfo.xml`.
 
 ### Android
 

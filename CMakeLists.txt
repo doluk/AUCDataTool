@@ -16,7 +16,7 @@ if(CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg.cmake$")
 endif()
 
 project(AUCDataTool
-    VERSION 0.2.0
+    VERSION 0.2.1
     DESCRIPTION "Viewer for analytical ultracentrifugation raw data"
     LANGUAGES CXX)
 
