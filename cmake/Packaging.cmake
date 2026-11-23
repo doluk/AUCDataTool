@@ -23,6 +23,8 @@ if(WIN32)
     set(CPACK_NSIS_PACKAGE_NAME "AUCDataTool")
     set(CPACK_NSIS_DISPLAY_NAME "AUCDataTool ${PROJECT_VERSION}")
     set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\AUCDataTool.exe")
+    set(CPACK_NSIS_MUI_ICON "${PROJECT_SOURCE_DIR}/app/windows/AUCDataTool.ico")
+    set(CPACK_NSIS_MUI_UNIICON "${PROJECT_SOURCE_DIR}/app/windows/AUCDataTool.ico")
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
     set(CPACK_NSIS_MODIFY_PATH OFF)
 elseif(APPLE)
@@ -56,7 +58,7 @@ libxcb-xfixes0, libxcb-xinerama0, libxcb-xkb1")
     # Automatic dependencies would require/provide the bundled Qt libraries.
     set(CPACK_RPM_PACKAGE_AUTOREQPROV OFF)
     set(CPACK_RPM_PACKAGE_REQUIRES
-        "libglvnd-opengl, libglvnd-egl, fontconfig, freetype, dbus-libs, libxkbcommon, \
+        "libglvnd-opengl, libglvnd-glx, libglvnd-egl, fontconfig, freetype, dbus-libs, libxkbcommon, \
 libxkbcommon-x11, libX11-xcb, libxcb, xcb-util-cursor, xcb-util-wm, xcb-util-image, \
 xcb-util-keysyms, xcb-util-renderutil")
     set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /opt)

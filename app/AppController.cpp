@@ -1553,7 +1553,7 @@ void AppController::updateScanTiming(bool force)
             const auto per = c->wavelengthScans();
             const bool atOnce = per.size() == 1 && c->wavelengths.size() > 1;
             for (std::size_t w = 0; w < per.size() && w < c->wavelengths.size(); ++w) {
-                Slot s{c->cell, c->wavelengths[w], {}, c->channel, atOnce ? c->wavelengths.back() : c->wavelengths[w]};
+                Slot s{c->cell, c->wavelengths[w], {}, c->channel, atOnce ? c->wavelengths.back() : c->wavelengths[w], {}};
                 for (const auc::ScanInfo& si : per[w]) s.scans.push_back({si.seconds, si.number});
                 cellSlots.push_back(std::move(s));
             }

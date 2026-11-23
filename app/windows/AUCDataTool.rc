@@ -1,0 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Lukas Dobler
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Application icon (rendered from app/linux/io.github.doluk.AUCDataTool.svg). Qt uses
+// IDI_ICON1 as the default window icon; Explorer and the taskbar show it for the exe.
+IDI_ICON1 ICON "AUCDataTool.ico"

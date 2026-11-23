@@ -14,11 +14,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
-            installer: |
-              build/package/*.deb
-              build/package/*.rpm
-              build/package/*.tar.gz
           - os: windows-2022
             installer: build/package/*.exe
           - os: macos-15
@@ -46,31 +41,35 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: ctest --test-dir build -C Release --output-on-failure
 
-      - name: Install rpmbuild
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y rpm desktop-file-utils
-
-      - name: Validate desktop file
-        if: runner.os == 'Linux'
-        run: desktop-file-validate app/linux/io.github.doluk.AUCDataTool.desktop
-
       - name: Package
         run: cpack --config build/CPackConfig.cmake -C Release -B build/package
-
-      - name: Check Linux packages
-        if: runner.os == 'Linux'
-        run: |
-          set -e
-          dpkg-deb -c build/package/*.deb | grep -E 'share/applications/io.github.doluk.AUCDataTool.desktop'
-          dpkg-deb -c build/package/*.deb | grep -E 'share/icons/hicolor/scalable/apps/io.github.doluk.AUCDataTool.svg'
-          dpkg-deb -I build/package/*.deb postinst | grep -q 'ln -sf'
-          rpm -qp --scripts build/package/*.rpm | grep -q 'ln -sf'
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: AUCDataTool-${{ runner.os }}
           path: ${{ matrix.installer }}
+          if-no-files-found: error
+
+  linux:
+    # .deb, .rpm and .tar.gz built on AlmaLinux 8 (glibc 2.28) so they also run on
+    # RHEL/Rocky/Alma 8; the script checks the shipped binaries for newer glibc symbols.
+    runs-on: ubuntu-24.04
+    container: almalinux:8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build, test and package
+        run: bash packaging/linux/build-el8.sh
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: AUCDataTool-Linux
+          path: |
+            build-el8/package/*.deb
+            build-el8/package/*.rpm
+            build-el8/package/*.tar.gz
           if-no-files-found: error
 
   android:
@@ -183,7 +182,7 @@ jobs:
   release:
     # Attach the installers to a GitHub release when a version tag (v*) is pushed.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, android, arch]
+    needs: [build, linux, android, arch]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

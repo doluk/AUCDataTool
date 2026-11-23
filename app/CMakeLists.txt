@@ -24,6 +24,10 @@ message(STATUS "AUCDataTool: 3D surface ${AUC_HAVE_GRAPHS}, printing ${AUC_HAVE_
 qt_add_executable(aucdatatool WIN32 MACOSX_BUNDLE
     main.cpp
 )
+if(WIN32)
+    # Exe and window icon (app/windows/AUCDataTool.ico, from the Linux SVG icon).
+    target_sources(aucdatatool PRIVATE windows/AUCDataTool.rc)
+endif()
 
 set(auc_qml_files
     qml/Main.qml

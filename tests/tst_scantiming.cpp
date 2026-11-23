@@ -21,7 +21,7 @@ namespace {
 std::vector<Slot> cycleRun(const std::vector<int>& cells, int cycles, double step, std::vector<std::pair<int, int>> skip = {})
 {
     std::vector<Slot> cellSlots;
-    for (int c : cells) cellSlots.push_back({c, 280.0, {}});
+    for (int c : cells) cellSlots.push_back({c, 280.0, {}, 'A', 0.0, {}});
     double t = 100.0;
     for (int k = 0; k < cycles; ++k)
         for (std::size_t i = 0; i < cells.size(); ++i) {
@@ -114,7 +114,7 @@ private slots:
         // Channels B and A read in the same scans: one slot, both channels listed.
         std::vector<Slot> in;
         for (char ch : {'B', 'A'}) {
-            Slot s{1, 280.0, {}, ch};
+            Slot s{1, 280.0, {}, ch, 0.0, {}};
             for (int i = 0; i < 5; ++i) s.scans.push_back({100.0 * i, i + 1});
             in.push_back(std::move(s));
         }
@@ -128,7 +128,7 @@ private slots:
     {
         // Multi-wavelength detector: channels A and B of a cell scanned one after the other,
         // all wavelengths at once.
-        std::vector<Slot> s{{1, 220.0, {}, 'A', 600.0}, {1, 220.0, {}, 'B', 600.0}};
+        std::vector<Slot> s{{1, 220.0, {}, 'A', 600.0, {}}, {1, 220.0, {}, 'B', 600.0, {}}};
         for (int k = 0; k < 5; ++k) {
             s[0].scans.push_back({100.0 * k, k + 1});
             s[1].scans.push_back({100.0 * k + 40.5, k + 1});
@@ -146,7 +146,7 @@ private slots:
     void empty()
     {
         QVERIFY(analyze({}).events.empty());
-        QVERIFY(analyze({{1, 280.0, {}}}).cellSlots.empty());
+        QVERIFY(analyze({{1, 280.0, {}, 'A', 0.0, {}}}).cellSlots.empty());
     }
 
     void xlWavelengthScans()

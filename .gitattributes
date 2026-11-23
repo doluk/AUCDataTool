@@ -1,3 +1,4 @@
 app/linux/postinst text eol=lf
 app/linux/prerm text eol=lf
 app/linux/*.desktop text eol=lf
+packaging/linux/*.sh text eol=lf
