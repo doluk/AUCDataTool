@@ -85,11 +85,20 @@ jobs:
       - name: Validate AppStream metadata
         run: appstreamcli validate --no-net app/linux/io.github.doluk.AUCDataTool.metainfo.xml
 
-      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+      # A user installation of the KDE SDK: updating the image's system installation fails
+      # on the runner's overlay file system ("Invalid cross-device link").
+      - name: Build bundle
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak-builder --user --install-deps-from=flathub --disable-rofiles-fuse --force-clean             --repo=repo build-flatpak packaging/flatpak/io.github.doluk.AUCDataTool.yml
+          flatpak build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo             repo AUCDataTool-x86_64.flatpak io.github.doluk.AUCDataTool
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
         with:
-          bundle: AUCDataTool-x86_64.flatpak
-          manifest-path: packaging/flatpak/io.github.doluk.AUCDataTool.yml
-          cache-key: flatpak-builder-${{ github.sha }}
+          name: AUCDataTool-Flatpak
+          path: AUCDataTool-x86_64.flatpak
+          if-no-files-found: error
 
   android:
     # APK for arm64-v8a, built with Qt for Android. Signed with the keystore from the
@@ -180,7 +189,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install dependencies
-        run: pacman -Syu --noconfirm --needed cmake ninja qt6-base qt6-declarative qt6-graphs qt6-quick3d
+        run: pacman -Syu --noconfirm --needed cmake ninja qt6-base qt6-declarative qt6-graphs qt6-quick3d qt6-wayland
 
       - uses: actions/checkout@v4
 
