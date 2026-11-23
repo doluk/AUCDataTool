@@ -8,8 +8,10 @@
 #include <QString>
 #include <QStringList>
 
+#include <cmath>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -34,6 +36,30 @@ struct ScanInfo {
     double setRpm = 0;       ///< set speed (0 if not stored)
     double seconds = 0;      ///< elapsed time
     double omega2t = 0;      ///< rad²/s
+};
+
+/// Log of one scan's radial sweep (multi-wavelength detector: "000.tr", "001.tr", … next
+/// to the scan files, named by scan number): per radius point the elapsed run time, the
+/// rotor speed and ω²t at which it was read.
+struct ScanTrace {
+    int number = 0;               ///< scan number
+    std::vector<double> seconds;  ///< elapsed run time, s (logged in ms); empty: no log; NaN: dropout
+    std::vector<double> rpm;      ///< NaN: dropout
+    std::vector<double> omega2t;  ///< rad²/s; NaN: dropout
+
+    /// First / last logged time (NaN if none).
+    double start() const
+    {
+        for (double s : seconds)
+            if (std::isfinite(s)) return s;
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    double end() const
+    {
+        for (auto it = seconds.rbegin(); it != seconds.rend(); ++it)
+            if (std::isfinite(*it)) return *it;
+        return std::numeric_limits<double>::quiet_NaN();
+    }
 };
 
 /// One cell/channel of a run: scans × wavelengths × radius points.
@@ -91,6 +117,16 @@ public:
     /// points [firstPoint, firstPoint+count). Returned as a Dataset whose `radius` holds
     /// the wavelengths (nm). Reads every scan; cached for the last two windows.
     IoResult spectra(std::size_t firstPoint, std::size_t count, std::shared_ptr<const Dataset>& out) const;
+
+    /// Run conditions of every scan per wavelength (same order as `wavelengths`), for
+    /// sources scanning the wavelengths one after another (XL: each wavelength has its own
+    /// scan files and times, including scans past the last complete set). The default
+    /// returns `scans` once – one scan covers all wavelengths.
+    virtual std::vector<std::vector<ScanInfo>> wavelengthScans() const { return {scans}; }
+
+    /// Sweep logs per scan (same order as `scans`; an entry without times where a scan has
+    /// none). Empty if the source has no logs at all.
+    virtual std::vector<ScanTrace> scanTraces() const { return {}; }
 
     /// Re-reads headers after files were added or rewritten (live mode). Returns true if
     /// anything changed. Clears the slice cache.

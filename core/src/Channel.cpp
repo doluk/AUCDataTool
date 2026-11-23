@@ -248,6 +248,29 @@ IoResult readMwlHeader(QFile& f, bool mwrs, const mwl::MwrsRunInfo& run, mwl::Sc
     return parse(f.read(mwl::kHeaderProbeBytes));
 }
 
+/// Parses a sweep log: tab-separated rows "rpm  time/ms  ω²t", one per radius point.
+/// Lines that do not parse (e.g. a header) are skipped; rows of zeros ("000 000 0", a
+/// logging dropout) keep their place as NaN. False if no time was logged.
+bool parseTrace(const QByteArray& text, ScanTrace& t)
+{
+    t.seconds.clear();
+    t.rpm.clear();
+    t.omega2t.clear();
+    for (const QByteArray& raw : text.split('\n')) {
+        const QList<QByteArray> f = raw.trimmed().split('\t');
+        if (f.size() < 3) continue;
+        bool a = false, b = false, c = false;
+        const double rpm = f[0].trimmed().toDouble(&a), ms = f[1].trimmed().toDouble(&b), w2t = f[2].trimmed().toDouble(&c);
+        if (!a || !b || !c) continue;
+        const bool dropout = ms <= 0.0;
+        constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+        t.rpm.push_back(dropout ? nan : rpm);
+        t.seconds.push_back(dropout ? nan : ms / 1000.0);
+        t.omega2t.push_back(dropout ? nan : w2t);
+    }
+    return std::isfinite(t.start());
+}
+
 class MwlChannel final : public ChannelSource {
 public:
     std::vector<ScanFile> scanFiles;
@@ -315,6 +338,42 @@ public:
         if (peak <= 5e6f) return;
         for (auto& sf : scanFiles) sf.header.scale = 1e-4;
         formatName += QStringLiteral(" (÷10000)");
+    }
+
+    /// Sweep logs "NNN.tr" (scan number) next to the scan files. A log counts only if it
+    /// starts at the scan's time (±1.5 s): the names carry no cell, so a log of another
+    /// cell's sweep is rejected. Missing logs are looked for again (live mode).
+    std::vector<ScanTrace> scanTraces() const override
+    {
+        std::lock_guard lock(m_traceMutex);
+        m_traces.resize(scanFiles.size());
+        bool any = false;
+        for (std::size_t i = 0; i < scanFiles.size(); ++i) {
+            const auto& h = scanFiles[i].header;
+            ScanTrace& t = m_traces[i];
+            if (t.number != h.scan || t.seconds.empty()) {
+                t = ScanTrace{};
+                t.number = h.scan;
+                QFile f(QFileInfo(scanFiles[i].path).dir().filePath(QStringLiteral("%1.tr").arg(h.scan, 3, 10, QLatin1Char('0'))));
+                ScanTrace read;
+                if (f.open(QIODevice::ReadOnly) && parseTrace(f.readAll(), read) && std::abs(read.start() - h.seconds) <= 1.5) {
+                    read.number = h.scan;
+                    t = std::move(read);
+                }
+            }
+            any |= !t.seconds.empty();
+        }
+        return any ? m_traces : std::vector<ScanTrace>{};
+    }
+
+    /// Scan times from the sweep logs where present (ms instead of whole seconds).
+    std::vector<std::vector<ScanInfo>> wavelengthScans() const override
+    {
+        std::vector<ScanInfo> out = scans;
+        const auto traces = scanTraces();
+        for (std::size_t i = 0; i < out.size() && i < traces.size(); ++i)
+            if (!traces[i].seconds.empty()) out[i].seconds = traces[i].start();
+        return {out};
     }
 
     bool refresh() override
@@ -416,6 +475,10 @@ protected:
         }
         return {};
     }
+
+private:
+    mutable std::mutex m_traceMutex;
+    mutable std::vector<ScanTrace> m_traces;
 };
 
 // ---------------------------------------------------------------------------------------
@@ -444,6 +507,8 @@ public:
         absorbanceData = type != DataType::RadialIntensity && type != DataType::WavelengthIntensity;
         rawType = type;
         formatName = QStringLiteral("auc %1").arg(QString::fromStdString(toCode(type)));
+        if (type == DataType::Interference) valueLabel = QStringLiteral("Interference (fringes)");
+        if (type == DataType::Fluorescence) valueLabel = QStringLiteral("Fluorescence (counts)");
         // Radius grid and run conditions from the first file.
         Dataset d;
         if (IoResult r = AucFile::read(wlFiles.front().path, d); !r.ok()) return r;
@@ -500,6 +565,36 @@ protected:
         }
         return {};
     }
+
+public:
+    /// Each wavelength file stores its own scan times (Optima/XL scan the wavelengths one
+    /// after another). Reads every file once; cached until the files change.
+    std::vector<std::vector<ScanInfo>> wavelengthScans() const override
+    {
+        std::lock_guard lock(m_timesMutex);
+        QStringList key;  // files and their scan counts (live mode appends scans)
+        for (const auto& w : wlFiles) key << QStringLiteral("%1|%2").arg(w.path).arg(w.scanCount);
+        if (key != m_timesKey) {
+            m_times.clear();
+            for (const auto& w : wlFiles) {
+                std::vector<ScanInfo> list;
+                Dataset d;
+                if (AucFile::read(w.path, d).ok())
+                    for (std::size_t i = 0; i < d.scans.size(); ++i) {
+                        const Scan& s = d.scans[i];
+                        list.push_back({int(i) + 1, s.temperature, s.rpm, 0.0, s.seconds, s.omega2t});
+                    }
+                m_times.push_back(std::move(list));
+            }
+            m_timesKey = key;
+        }
+        return m_times;
+    }
+
+private:
+    mutable std::mutex m_timesMutex;
+    mutable std::vector<std::vector<ScanInfo>> m_times;  ///< per wavelength file
+    mutable QStringList m_timesKey;
 };
 
 // ---------------------------------------------------------------------------------------
@@ -552,15 +647,7 @@ public:
 
         std::size_t ns = SIZE_MAX;
         for (const auto* l : m_lists) ns = std::min(ns, l->size());
-        scans.clear();
-        const auto& l0 = *m_lists.front();
-        static const QRegularExpression digits(QStringLiteral("(\\d+)$"));
-        for (std::size_t i = 0; i < ns; ++i) {
-            const auto& h = l0[i].header;
-            const auto m = digits.match(QFileInfo(l0[i].path).completeBaseName());
-            const int number = m.hasMatch() ? m.captured(1).toInt() : int(i) + 1;
-            scans.push_back({number, h.temperature, h.rpm, 0.0, h.seconds, h.omega2t});
-        }
+        scans = scanInfos(*m_lists.front(), ns);
         for (const auto* l : m_lists)
             for (std::size_t i = 0; i < ns; ++i) files << (*l)[i].path;
         return {};
@@ -584,6 +671,13 @@ public:
         finalize();
         clearCache();
         return std::size_t(files.size()) != before;
+    }
+
+    std::vector<std::vector<ScanInfo>> wavelengthScans() const override
+    {
+        std::vector<std::vector<ScanInfo>> out;
+        for (const auto* l : m_lists) out.push_back(scanInfos(*l, l->size()));
+        return out;
     }
 
 protected:
@@ -619,6 +713,21 @@ protected:
     }
 
 private:
+    /// Run conditions of the first `n` files; the scan number from the file name ("00042").
+    static std::vector<ScanInfo> scanInfos(const std::vector<File>& list, std::size_t n)
+    {
+        static const QRegularExpression digits(QStringLiteral("(\\d+)$"));
+        std::vector<ScanInfo> out;
+        out.reserve(std::min(n, list.size()));
+        for (std::size_t i = 0; i < n && i < list.size(); ++i) {
+            const auto& h = list[i].header;
+            const auto m = digits.match(QFileInfo(list[i].path).completeBaseName());
+            const int number = m.hasMatch() ? m.captured(1).toInt() : int(i) + 1;
+            out.push_back({number, h.temperature, h.rpm, 0.0, h.seconds, h.omega2t});
+        }
+        return out;
+    }
+
     std::vector<const std::vector<File>*> m_lists;  ///< per wavelength, ascending
 };
 

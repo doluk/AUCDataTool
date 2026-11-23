@@ -99,7 +99,7 @@ ColumnLayout {
         }
     }
 
-    GroupBox {
+    OptionSection {
         title: qsTr("Wavelength")
         Layout.fillWidth: true
         Layout.topMargin: 6
@@ -205,11 +205,11 @@ ColumnLayout {
         }
     }
 
-    GroupBox {
+    OptionSection {
         title: qsTr("Data")
         Layout.fillWidth: true
         Layout.topMargin: root.controller.wavelengthCount > 1 ? 0 : 6
-        enabled: root.hasData
+        contentEnabled: root.hasData
         ColumnLayout {
             anchors.fill: parent
             Label {
@@ -304,10 +304,10 @@ ColumnLayout {
         }
     }
 
-    GroupBox {
+    OptionSection {
         title: qsTr("Scans")
         Layout.fillWidth: true
-        enabled: root.hasData
+        contentEnabled: root.hasData
         GridLayout {
             anchors.fill: parent
             columns: 2
@@ -378,10 +378,10 @@ ColumnLayout {
         }
     }
 
-    GroupBox {
+    OptionSection {
         title: qsTr("Noise")
         Layout.fillWidth: true
-        enabled: root.hasData
+        contentEnabled: root.hasData
         ColumnLayout {
             anchors.fill: parent
             NoiseRow {
@@ -399,10 +399,10 @@ ColumnLayout {
         }
     }
 
-    GroupBox {
+    OptionSection {
         title: qsTr("Corrections")
         Layout.fillWidth: true
-        enabled: root.hasData
+        contentEnabled: root.hasData
         ColumnLayout {
             anchors.fill: parent
             CheckBox {
@@ -447,15 +447,20 @@ ColumnLayout {
 
     // Interference workflow of S. Xu et al. (AUC 2026): jitter correction with the baseline
     // offset over the air–air region, then fringe-jump removal held at an alignment radius.
-    GroupBox {
+    OptionSection {
         title: qsTr("Fringe-jump correction")
         Layout.fillWidth: true
-        enabled: root.hasData
+        contentEnabled: root.hasData
         visible: root.controller.isInterference
         ColumnLayout {
             id: fringe
             anchors.fill: parent
             readonly property var info: root.controller.fringeInfo
+            readonly property bool limitsSet: root.controller.fringeR2 > root.controller.fringeR1
+            function setLimits(a, b) {
+                root.controller.fringeR1 = Math.min(a, b)
+                root.controller.fringeR2 = Math.max(a, b)
+            }
             Label {
                 visible: root.controller.offsetMode !== 2
                 text: qsTr("Correct the air–air jitter first: Offset → Baseline region over the air–air region.")
@@ -475,17 +480,23 @@ ColumnLayout {
                 columns: 2
                 visible: root.controller.fringeJumps
                 Layout.fillWidth: true
+                // Shows the limits in use: set ones, else the estimate (meniscus where the
+                // scans start to differ, bottom = last point). Typing one fixes both.
                 Label { text: qsTr("Meniscus r_a (cm)") }
                 NumberField {
                     Layout.fillWidth: true
-                    value: root.controller.fringeR1
-                    onCommitted: (v) => root.controller.fringeR1 = v
+                    value: fringe.limitsSet ? root.controller.fringeR1 : (fringe.info.r1 ?? 0)
+                    onCommitted: (v) => fringe.setLimits(v, fringe.limitsSet ? root.controller.fringeR2 : (fringe.info.r2 ?? 0))
+                    ToolTip.visible: hovered
+                    ToolTip.text: fringe.limitsSet ? qsTr("Set manually") : qsTr("Automatic: where the scans start to differ")
                 }
                 Label { text: qsTr("Bottom r_b (cm)") }
                 NumberField {
                     Layout.fillWidth: true
-                    value: root.controller.fringeR2
-                    onCommitted: (v) => root.controller.fringeR2 = v
+                    value: fringe.limitsSet ? root.controller.fringeR2 : (fringe.info.r2 ?? 0)
+                    onCommitted: (v) => fringe.setLimits(fringe.limitsSet ? root.controller.fringeR1 : (fringe.info.r1 ?? 0), v)
+                    ToolTip.visible: hovered
+                    ToolTip.text: fringe.limitsSet ? qsTr("Set manually") : qsTr("Automatic: last radial point")
                 }
                 Label { text: qsTr("Threshold (fringes)") }
                 NumberField {
@@ -523,9 +534,16 @@ ColumnLayout {
                     ToolTip.text: qsTr("Align at r* where the corrected first/last-scan crossing T(r*) ≈ r*")
                 }
                 Button {
-                    text: qsTr("Auto")
+                    text: qsTr("Auto alignment")
                     enabled: root.controller.fringeAlign > 0
                     onClicked: root.controller.fringeAlign = 0
+                }
+                Button {
+                    text: qsTr("Auto limits")
+                    enabled: fringe.limitsSet
+                    onClicked: fringe.setLimits(0, 0)
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Meniscus and bottom estimated from the scans")
                 }
             }
             Label {
@@ -543,7 +561,7 @@ ColumnLayout {
                     t.push(qsTr("Route B: %1").arg(f.selfConsistentValid ? cm(f.selfConsistent) : qsTr("not identified")))
                     if (f.iso !== undefined)
                         t.push(qsTr("Isoconcentration point: %1 (%2 fringes)").arg(cm(f.iso)).arg(Number(f.isoFringes).toFixed(4)))
-                    const ra = root.controller.fringeR1, rb = root.controller.fringeR2
+                    const ra = f.r1 ?? 0, rb = f.r2 ?? 0
                     if (rb > ra && ra > 0)
                         t.push(qsTr("Theoretical iso √((r_b² + r_a²)/2): %1").arg(cm(Math.sqrt((rb * rb + ra * ra) / 2))))
                     return t.join("\n")
@@ -552,10 +570,10 @@ ColumnLayout {
         }
     }
 
-    GroupBox {
+    OptionSection {
         title: qsTr("Radial integration")
         Layout.fillWidth: true
-        enabled: root.hasData
+        contentEnabled: root.hasData
         ColumnLayout {
             anchors.fill: parent
             CheckBox {
@@ -589,7 +607,7 @@ ColumnLayout {
         }
     }
 
-    GroupBox {
+    OptionSection {
         title: qsTr("Display")
         Layout.fillWidth: true
         ColumnLayout {
@@ -609,10 +627,10 @@ ColumnLayout {
         }
     }
 
-    GroupBox {
+    OptionSection {
         title: qsTr("Curves")
         Layout.fillWidth: true
-        enabled: root.plot.hasData
+        contentEnabled: root.plot.hasData
         ColumnLayout {
             anchors.fill: parent
 

@@ -218,6 +218,54 @@ private slots:
         writeBytes(dir.filePath("testrun.2.A.x.00005.mwrs"), mwl::encodeMwrs(header(2, 'A', 5, points, nwl), rows(2, 5, points, nwl), 1.4));
         QVERIFY(c->refresh());
         QCOMPARE(c->scans.size(), std::size_t(5));
+
+        // No sweep logs: none reported.
+        QVERIFY(c->scanTraces().empty());
+    }
+
+    void readsSweepLogs()
+    {
+        QTemporaryDir dir;
+        mwl::MwrsRunInfo info;
+        info.version = 1.4;
+        info.runId = "tr";
+        QVERIFY(mwl::writeMwrsXml(dir.filePath("tr.mwrs.xml"), info).ok());
+        const int points = 6, nwl = 3;
+        for (int scan = 0; scan < 3; ++scan) {
+            mwl::ScanHeader h = header(1, 'A', scan, points, nwl);
+            h.seconds = 100 + 50 * scan;
+            writeBytes(dir.filePath(QString("tr.1.A.x.%1.mwrs").arg(scan, 3, 10, QChar('0'))), mwl::encodeMwrs(h, rows(1, scan, points, nwl), 1.4));
+        }
+        // Scan 0: log in ms from 100.25 s; scan 1: no log; scan 2: log of another sweep (rejected).
+        QByteArray log0, log2;
+        for (int j = 0; j < points; ++j) {
+            if (j == 3) {  // dropout
+                log0 += "000\t000\t0.0000000000E+0\r\n";
+                continue;
+            }
+            log0 += QByteArray::number(12000 + j) + '\t' + QByteArray::number(100250 + 500 * j) + "\t1.5E+7\r\n";
+            log2 += "12000\t" + QByteArray::number(170000 + 500 * j) + "\t2.0E+7\r\n";
+        }
+        writeBytes(dir.filePath("000.tr"), log0);
+        writeBytes(dir.filePath("002.tr"), log2);
+
+        const OpenResult res = openData({dir.path()});
+        QCOMPARE(res.channels.size(), std::size_t(1));
+        const auto traces = res.channels[0]->scanTraces();
+        QCOMPARE(traces.size(), std::size_t(3));
+        QCOMPARE(traces[0].seconds.size(), std::size_t(points));
+        QCOMPARE(traces[0].seconds[2], 101.25);
+        QCOMPARE(traces[0].rpm[2], 12002.0);
+        QCOMPARE(traces[0].omega2t[0], 1.5e7);
+        QVERIFY(std::isnan(traces[0].seconds[3]) && std::isnan(traces[0].rpm[3]));
+        QCOMPARE(traces[0].end(), 102.75);
+        QVERIFY(traces[1].seconds.empty());
+        QVERIFY(traces[2].seconds.empty());
+        // Scan times: from the log where present.
+        const auto times = res.channels[0]->wavelengthScans();
+        QCOMPARE(times.size(), std::size_t(1));
+        QCOMPARE(times[0][0].seconds, 100.25);
+        QCOMPARE(times[0][1].seconds, 150.0);
     }
 
     void opensMwFilesWithDarkCurrent()

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <random>
 #include <utility>
 
 using namespace auc;
@@ -314,6 +315,48 @@ private slots:
         QVERIFY(fringeCorrection(d, 1100, 0.5) != fringeCorrection(d, 600, 0.5));
     }
 
+    void meniscusEstimate()
+    {
+        // Air (a different constant per scan, jitter) up to 6.2 cm, then a solution column
+        // whose signal grows with time.
+        Dataset d;
+        for (int j = 0; j < 200; ++j) d.radius.push_back(5.9 + 0.006 * j);
+        for (int i = 0; i < 10; ++i) {
+            Scan s;
+            for (double r : d.radius)
+                s.values.push_back(float(0.3 * i + (r < 6.2 ? 0.0 : 0.4 * i * (r - 6.1)) + 0.001 * ((int(r * 1000) % 7) - 3)));
+            d.scans.push_back(std::move(s));
+        }
+        const double m = estimateMeniscus(d);
+        QVERIFY(std::isfinite(m));
+        QVERIFY2(m >= 6.19 && m <= 6.25, qPrintable(QString::number(m)));
+        // No solution column: no estimate.
+        for (Scan& s : d.scans)
+            for (float& v : s.values) v = 1.0f;
+        QVERIFY(std::isnan(estimateMeniscus(d)));
+    }
+
+    void cellBottomEstimate()
+    {
+        // Smooth column up to 7.1 cm, noise beyond.
+        Dataset d;
+        for (int j = 0; j < 300; ++j) d.radius.push_back(6.2 + 0.0035 * j);
+        std::mt19937 rng(7);
+        std::uniform_real_distribution<float> noise(-1.f, 1.f);
+        for (int i = 0; i < 8; ++i) {
+            Scan s;
+            for (double r : d.radius)
+                s.values.push_back(float(0.5 * i + 2.0 * (r - 6.2) + 0.002 * noise(rng) + (r > 7.1 ? 2.0 * noise(rng) : 0.0)));
+            d.scans.push_back(std::move(s));
+        }
+        const double b = estimateCellBottom(d, 6.2);
+        QVERIFY2(b >= 7.09 && b <= 7.12, qPrintable(QString::number(b)));
+        // Smooth to the end: no estimate.
+        for (Scan& s : d.scans)
+            for (float& v : s.values) v = 1.0f;
+        QVERIFY(std::isnan(estimateCellBottom(d, 6.2)));
+    }
+
     void omega2tFit()
     {
         // 50 000 rpm from t0 = 120 s; the first scan is still accelerating (excluded).
@@ -328,6 +371,20 @@ private slots:
         QVERIFY(std::abs(f.t0 - 120.0) < 1e-6);
         QVERIFY(f.rms < 1e-12);
         QVERIFY(!auc::proc::fitOmega2t(std::vector<double>{1.0}, std::vector<double>{1.0}, std::vector<double>{1.0}).valid);
+    }
+
+    void lineFit()
+    {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        // y = 2x + 1 with ±0.1 alternating; one NaN pair skipped.
+        std::vector<double> x{0, 1, 2, 3, nan, 5}, y{1.1, 2.9, 5.1, 6.9, 3.0, 11.0};
+        const auto f = auc::proc::fitLine(x, y);
+        QVERIFY(f.valid);
+        QCOMPARE(f.n, std::size_t(5));
+        QVERIFY(std::abs(f.slope - 2.0) < 0.05);
+        QVERIFY(f.rms > 0.05 && f.rms < 0.15);
+        QVERIFY(f.r2 > 0.99 && f.r2 < 1.0);
+        QVERIFY(!auc::proc::fitLine(std::vector<double>{1.0, 1.0}, std::vector<double>{1.0, 2.0}).valid);
     }
 
 };

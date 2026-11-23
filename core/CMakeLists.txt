@@ -22,6 +22,8 @@ add_library(auccore STATIC
     src/XlFormat.cpp
     include/auc/Export.h
     src/Export.cpp
+    include/auc/ScanTiming.h
+    src/ScanTiming.cpp
 )
 add_library(Auc::Core ALIAS auccore)
 

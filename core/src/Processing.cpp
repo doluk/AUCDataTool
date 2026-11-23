@@ -317,6 +317,84 @@ double crossingRadius(std::span<const double> radius, std::span<const float> a, 
     return best;
 }
 
+double estimateMeniscus(const Dataset& d, double minSpread)
+{
+    constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+    const std::size_t n = d.radius.size();
+    if (n < 30 || d.scans.size() < 2) return nan;
+    const std::size_t head = std::max<std::size_t>(3, n / 50);  // air: the first 2 % of points
+
+    // Spread (standard deviation over the scans) of every point, each scan relative to its
+    // mean over the head.
+    std::vector<double> sum(n, 0.0), sq(n, 0.0);
+    std::vector<int> count(n, 0);
+    for (const Scan& s : d.scans) {
+        if (s.values.size() < n) continue;
+        double base = 0.0;
+        int nb = 0;
+        for (std::size_t j = 0; j < head; ++j)
+            if (std::isfinite(s.values[j])) base += s.values[j], ++nb;
+        if (nb == 0) continue;
+        base /= nb;
+        for (std::size_t j = 0; j < n; ++j) {
+            const double v = double(s.values[j]) - base;
+            if (!std::isfinite(v)) continue;
+            sum[j] += v;
+            sq[j] += v * v;
+            ++count[j];
+        }
+    }
+    std::vector<double> spread(n, nan);
+    for (std::size_t j = 0; j < n; ++j)
+        if (count[j] >= 2) {
+            const double m = sum[j] / count[j];
+            spread[j] = std::sqrt(std::max(0.0, sq[j] / count[j] - m * m));
+        }
+
+    // Noise in the air: median spread over the first 5 % of points.
+    std::vector<double> air;
+    for (std::size_t j = 0; j < std::max(head, n / 20); ++j)
+        if (std::isfinite(spread[j])) air.push_back(spread[j]);
+    if (air.empty()) return nan;
+    std::nth_element(air.begin(), air.begin() + std::ptrdiff_t(air.size() / 2), air.end());
+    const double threshold = std::max(10.0 * air[air.size() / 2], minSpread);
+
+    for (std::size_t j = head; j + 2 < n; ++j)
+        if (spread[j] > threshold && spread[j + 1] > threshold && spread[j + 2] > threshold) return d.radius[j];
+    return nan;
+}
+
+double estimateCellBottom(const Dataset& d, double from)
+{
+    constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+    const std::size_t n = d.radius.size();
+    if (n < 30 || d.scans.empty()) return nan;
+    std::vector<double> rough(n, nan), tmp;
+    for (std::size_t j = 1; j + 1 < n; ++j) {
+        tmp.clear();
+        for (const Scan& s : d.scans) {
+            if (s.values.size() < n) continue;
+            const double v = double(s.values[j + 1]) - 2.0 * s.values[j] + s.values[j - 1];
+            if (std::isfinite(v)) tmp.push_back(std::abs(v));
+        }
+        if (tmp.empty()) continue;
+        std::nth_element(tmp.begin(), tmp.begin() + std::ptrdiff_t(tmp.size() / 2), tmp.end());
+        rough[j] = tmp[tmp.size() / 2];
+    }
+    const auto first = std::size_t(std::lower_bound(d.radius.begin(), d.radius.end(), from) - d.radius.begin());
+    if (first + 10 >= n) return nan;
+    std::vector<double> column;
+    for (std::size_t j = first; j < n; ++j)
+        if (std::isfinite(rough[j])) column.push_back(rough[j]);
+    if (column.empty()) return nan;
+    std::nth_element(column.begin(), column.begin() + std::ptrdiff_t(column.size() / 2), column.end());
+    const double threshold = 8.0 * column[column.size() / 2];
+    if (!(threshold > 0)) return nan;
+    for (std::size_t j = (first + n) / 2; j + 2 < n; ++j)
+        if (rough[j] > threshold && rough[j + 1] > threshold && rough[j + 2] > threshold) return d.radius[j];
+    return nan;
+}
+
 FringeAlignment analyzeFringeAlignment(const Dataset& d, const FringeJumpParams& p)
 {
     FringeAlignment out;
@@ -455,6 +533,41 @@ double integrateOmega2t(std::span<const double> seconds, std::span<const double>
         sum += 0.5 * (w0 * w0 + w1 * w1) * (seconds[i] - seconds[i - 1]);
     }
     return sum;
+}
+
+LineFit fitLine(std::span<const double> x, std::span<const double> y)
+{
+    LineFit f;
+    const std::size_t m = std::min(x.size(), y.size());
+    double sx = 0, sy = 0;
+    for (std::size_t i = 0; i < m; ++i)
+        if (std::isfinite(x[i]) && std::isfinite(y[i])) {
+            sx += x[i];
+            sy += y[i];
+            ++f.n;
+        }
+    if (f.n < 2) return f;
+    const double mx = sx / double(f.n), my = sy / double(f.n);
+    double sxx = 0, sxy = 0, syy = 0;
+    for (std::size_t i = 0; i < m; ++i)
+        if (std::isfinite(x[i]) && std::isfinite(y[i])) {
+            sxx += (x[i] - mx) * (x[i] - mx);
+            sxy += (x[i] - mx) * (y[i] - my);
+            syy += (y[i] - my) * (y[i] - my);
+        }
+    if (!(sxx > 0)) return f;
+    f.slope = sxy / sxx;
+    f.intercept = my - f.slope * mx;
+    double ss = 0;
+    for (std::size_t i = 0; i < m; ++i)
+        if (std::isfinite(x[i]) && std::isfinite(y[i])) {
+            const double r = y[i] - (f.slope * x[i] + f.intercept);
+            ss += r * r;
+        }
+    f.rms = std::sqrt(ss / double(f.n));
+    f.r2 = syy > 0 ? 1.0 - ss / syy : 1.0;
+    f.valid = true;
+    return f;
 }
 
 Omega2tFit fitOmega2t(std::span<const double> seconds, std::span<const double> omega2t, std::span<const double> rpm)

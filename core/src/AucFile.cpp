@@ -252,10 +252,12 @@ IoResult AucFile::readFromBytes(const QByteArray& bytes, Dataset& out)
     for (qint32 j = 0; j < valueCount; ++j)
         d.radius[size_t(j)] = rMin + j * dR;  // stored axis is uniform
 
+    // Some exporters write no CRC (the file ends right after the last scan): nothing to
+    // verify then. A CRC that is present has to match.
     const quint32 computed = r.crc();
     quint32 stored;
-    if (!r.trailingCrc(stored)) return fail(IoResult::NotAucFile, QStringLiteral("missing CRC"));
-    if (stored != computed) return fail(IoResult::BadCrc, QStringLiteral("CRC mismatch – file is corrupt"));
+    if (r.trailingCrc(stored) && stored != computed)
+        return fail(IoResult::BadCrc, QStringLiteral("CRC mismatch – file is corrupt"));
 
     out = std::move(d);
     return {};

@@ -114,6 +114,16 @@ private slots:
         QCOMPARE(AucFile::readFromBytes(bytes, d).code, IoResult::BadCrc);
     }
 
+    void acceptsMissingCrc()
+    {
+        // Files ending right after the last scan (no CRC) are read without verification.
+        QByteArray bytes = AucFile::toBytes(makeDataset(false));
+        bytes.chop(4);
+        Dataset d;
+        QVERIFY(AucFile::readFromBytes(bytes, d).ok());
+        QCOMPARE(d.scanCount(), makeDataset(false).scanCount());
+    }
+
     void rejectsTruncated()
     {
         const QByteArray bytes = AucFile::toBytes(makeDataset(false));

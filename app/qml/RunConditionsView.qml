@@ -69,7 +69,7 @@ Item {
                     anchors.rightMargin: 24
                     anchors.topMargin: 16
                     visible: omega2tView.plot.curveCount > 1
-                    text: qsTr("● ω²t   - - ω²·(t − t₀)")
+                    text: qsTr("● ω²t   - - ω²·(t − t₀)") + (root.controller.runSweepLog ? qsTr("   — logged per radius point (.tr)") : "")
                     font.pixelSize: 12
                     opacity: 0.8
                 }

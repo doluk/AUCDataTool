@@ -106,6 +106,33 @@ class AppController : public QObject {
     Q_PROPERTY(ScanPlot* omega2tPlot READ omega2tPlot WRITE setOmega2tPlot NOTIFY runPlotsChanged)
     /// Ranges of speed and temperature and the ω²t fit, as text.
     Q_PROPERTY(QString runConditions READ runConditions NOTIFY runConditionsChanged)
+    /// The ω²t plot also shows ω²t logged per radius point (sweep logs, .tr).
+    Q_PROPERTY(bool runSweepLog READ runSweepLog NOTIFY runConditionsChanged)
+
+    // Scan timing of the current channel's run (absorbance, pseudo-absorbance or intensity, any file format): all
+    // cells interleaved, the intervals per cell transition and per cell.
+    Q_PROPERTY(bool hasScanTiming READ hasScanTiming NOTIFY datasetChanged)
+    /// Interval to the next scan (any cell) against time, one curve per cell just scanned.
+    Q_PROPERTY(ScanPlot* timingPlot READ timingPlot WRITE setTimingPlot NOTIFY timingPlotsChanged)
+    /// Intervals per cell transition (x, log scale) in rows (y = −row).
+    Q_PROPERTY(ScanPlot* transitionPlot READ transitionPlot WRITE setTransitionPlot NOTIFY timingPlotsChanged)
+    Q_PROPERTY(QString timingSummary READ timingSummary NOTIFY scanTimingChanged)
+    Q_PROPERTY(QString timingTimeLabel READ timingTimeLabel NOTIFY scanTimingChanged)
+    /// [{ label, color }] per cell in acquisition order.
+    Q_PROPERTY(QVariantList timingLegend READ timingLegend NOTIFY scanTimingChanged)
+    /// Rows of the transition plot: [{ value, label }] (y ticks) and [{ x, y, text, right }].
+    Q_PROPERTY(QVariantList timingTransitionTicks READ timingTransitionTicks NOTIFY scanTimingChanged)
+    Q_PROPERTY(QVariantList timingTransitionNotes READ timingTransitionNotes NOTIFY scanTimingChanged)
+    /// Times (in the time unit) at which a cell was skipped, as fixed markers [{ value, color, label, key, fixed }].
+    Q_PROPERTY(QVariantList timingSkipMarkers READ timingSkipMarkers NOTIFY scanTimingChanged)
+    /// Per cell: [{ title, info, color, notes: [{ x, y, text }] }]; plots via setTimingCellPlot().
+    Q_PROPERTY(QVariantList timingCells READ timingCells NOTIFY scanTimingChanged)
+    /// Sweep logs of the multi-wavelength detector (.tr): time since the sweep start against
+    /// radius (one curve per scan) and the rotor speed during the sweeps against time.
+    Q_PROPERTY(bool timingHasSweeps READ timingHasSweeps NOTIFY scanTimingChanged)
+    Q_PROPERTY(QString timingSweepInfo READ timingSweepInfo NOTIFY scanTimingChanged)
+    Q_PROPERTY(ScanPlot* sweepPlot READ sweepPlot WRITE setSweepPlot NOTIFY timingPlotsChanged)
+    Q_PROPERTY(ScanPlot* sweepSpeedPlot READ sweepSpeedPlot WRITE setSweepSpeedPlot NOTIFY timingPlotsChanged)
 
     // Current channel
     Q_PROPERTY(int scanCount READ scanCount NOTIFY datasetChanged)
@@ -155,7 +182,8 @@ class AppController : public QObject {
     Q_PROPERTY(double fringeThreshold MEMBER m_optFringeThreshold NOTIFY optionsChanged)
     Q_PROPERTY(double fringeR1 MEMBER m_optFringeR1 NOTIFY optionsChanged)
     Q_PROPERTY(double fringeR2 MEMBER m_optFringeR2 NOTIFY optionsChanged)
-    /// Result of the fringe-jump correction of the current channel: valid, alignment (used),
+    /// Result of the fringe-jump correction of the current channel: r1, r2 (solution column
+    /// used), limitsAuto (estimated, not set), valid, alignment (used),
     /// iso and isoFringes (first/last-scan crossing and its value), jumps, centre, stableValid,
     /// stableLo, stableHi, stableAlign (route A), selfConsistentValid, selfConsistent (route B).
     Q_PROPERTY(QVariantMap fringeInfo READ fringeInfo NOTIFY fringeInfoChanged)
@@ -216,6 +244,28 @@ public:
     ScanPlot* omega2tPlot() const { return m_omega2tPlot; }
     void setOmega2tPlot(ScanPlot* p);
     QString runConditions() const { return m_runConditions; }
+    bool runSweepLog() const { return m_runSweepLog; }
+
+    bool hasScanTiming() const;
+    ScanPlot* timingPlot() const { return m_timingPlot; }
+    void setTimingPlot(ScanPlot* p);
+    ScanPlot* transitionPlot() const { return m_transitionPlot; }
+    void setTransitionPlot(ScanPlot* p);
+    QString timingSummary() const { return m_timing.summary; }
+    QString timingTimeLabel() const { return m_timing.timeLabel; }
+    QVariantList timingLegend() const { return m_timing.legend; }
+    QVariantList timingTransitionTicks() const { return m_timing.transitionTicks; }
+    QVariantList timingTransitionNotes() const { return m_timing.transitionNotes; }
+    QVariantList timingSkipMarkers() const { return m_timing.skipMarkers; }
+    QVariantList timingCells() const { return m_timing.cells; }
+    bool timingHasSweeps() const { return m_timing.sweeps != nullptr; }
+    QString timingSweepInfo() const { return m_timing.sweepInfo; }
+    ScanPlot* sweepPlot() const { return m_sweepPlot; }
+    void setSweepPlot(ScanPlot* p);
+    ScanPlot* sweepSpeedPlot() const { return m_sweepSpeedPlot; }
+    void setSweepSpeedPlot(ScanPlot* p);
+    /// Registers the plot of cell `index` of timingCells (called by its delegate).
+    Q_INVOKABLE void setTimingCellPlot(int index, ScanPlot* plot);
 
     int scanCount() const;
     double radiusMin() const;
@@ -314,6 +364,8 @@ signals:
     void spectrumPlotChanged();
     void runPlotsChanged();
     void runConditionsChanged();
+    void timingPlotsChanged();
+    void scanTimingChanged();
     void surfaceSettingsChanged();
     void surfaceChanged();
     void exportingChanged();
@@ -369,6 +421,8 @@ private:
     void initSettings(int index);
     void reprocess(bool keepView);
     void updateRunPlots();
+    /// Recomputes the scan timing if the current run or its files changed.
+    void updateScanTiming(bool force = false);
     Job makeJob(const Entry& e) const;
     static void computeSpectrum(const Job& job, const std::vector<std::size_t>& selected, Result& res, QStringList& warnings);
     static SurfaceGridPtr computeSurface(const Job& job, const auc::Dataset& processed, QString& error);
@@ -403,6 +457,19 @@ private:
     QPointer<ScanPlot> m_spectrumPlot;
     QPointer<ScanPlot> m_speedPlot, m_temperaturePlot, m_omega2tPlot;
     QString m_runConditions;
+    bool m_runSweepLog = false;
+
+    struct Timing {
+        QString key;  ///< run folder and file count the data was computed for
+        QString summary, timeLabel;
+        QVariantList legend, transitionTicks, transitionNotes, skipMarkers, cells;
+        PlotSeriesPtr interleaved, transitions;
+        std::vector<PlotSeriesPtr> cellSeries;
+        PlotSeriesPtr sweeps, sweepSpeed;  ///< null without sweep logs
+        QString sweepInfo;
+    } m_timing;
+    QPointer<ScanPlot> m_timingPlot, m_transitionPlot, m_sweepPlot, m_sweepSpeedPlot;
+    QHash<int, QPointer<ScanPlot>> m_timingCellPlots;
     QString m_lastSpectrumKey;
     SurfaceGridPtr m_surface;
     bool m_surfaceActive = false;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Shapes
 import Auc.DataTool
 
 // Axes, labels, interaction and draggable vertical markers around a ScanPlot.
@@ -12,15 +13,21 @@ Item {
     property string xLabel
     property string yLabel
     property string placeholder
-    /// [{ value, color, label, key }] – vertical lines in data coordinates, draggable.
+    /// [{ value, color, label, key, fixed }] – vertical lines in data coordinates, draggable
+    /// unless `fixed` (then drawn dashed).
     property var markers: []
+    /// [{ x, y, text, color, right }] – text labels at data coordinates (centred above the
+    /// point); with `right`, at the right edge of the plot at height y.
+    property var annotations: []
+    /// [{ value, label }] – replaces the numeric y tick labels (e.g. category rows); null: numeric.
+    property var yTickLabels: null
     signal markerMoved(string key, real value)
     /// Left click selects the curve under the cursor (plot.selectedCurve).
     property bool curvesSelectable: false
     /// Finger input: wider marker grips; long press + drag draws the zoom box.
     readonly property bool touchUi: Qt.platform.os === "android" || Qt.platform.os === "ios"
 
-    readonly property int leftMargin: 66
+    property int leftMargin: 66
     readonly property int bottomMargin: 46
     readonly property int topMargin: 12
     readonly property int rightMargin: 18
@@ -67,10 +74,25 @@ Item {
                 height: markerLayer.height
                 visible: px >= -width / 2 && px <= plot.width + width / 2
                 Rectangle {
+                    visible: !marker.modelData.fixed
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: dragArea.containsMouse || dragArea.pressed ? 3 : 2
                     height: parent.height
                     color: marker.modelData.color
+                }
+                Shape {
+                    visible: !!marker.modelData.fixed
+                    anchors.fill: parent
+                    opacity: 0.8
+                    ShapePath {
+                        strokeColor: marker.modelData.color
+                        strokeWidth: 1
+                        strokeStyle: ShapePath.DashLine
+                        dashPattern: [4, 3]
+                        fillColor: "transparent"
+                        startX: marker.width / 2; startY: 0
+                        PathLine { x: marker.width / 2; y: marker.height }
+                    }
                 }
                 Label {
                     text: marker.modelData.label
@@ -82,6 +104,7 @@ Item {
                 MouseArea {
                     id: dragArea
                     anchors.fill: parent
+                    enabled: !marker.modelData.fixed
                     hoverEnabled: true
                     cursorShape: Qt.SizeHorCursor
                     preventStealing: true
@@ -91,6 +114,30 @@ Item {
                         root.markerMoved(marker.modelData.key, plot.toDataX(p.x))
                     }
                 }
+            }
+        }
+    }
+
+    // Annotations (text at data points, or at the right edge), clipped with the plot.
+    Item {
+        x: plot.x; y: plot.y
+        width: plot.width; height: plot.height
+        clip: true
+        z: 1
+        Repeater {
+            model: root.annotations
+            delegate: Label {
+                required property var modelData
+                readonly property real px: { plot.viewRect; plot.width; return modelData.right ? plot.width - width - 4 : plot.toPixelX(modelData.x) - width / 2 }
+                readonly property real py: { plot.viewRect; plot.height; return modelData.right ? plot.toPixelY(modelData.y) - height / 2 : plot.toPixelY(modelData.y) - height - 2 }
+                x: px
+                y: Math.max(0, Math.min(py, plot.height - height))  // labels of the highest points stay inside
+                visible: plot.hasData && isFinite(px) && isFinite(py)
+                text: modelData.text
+                color: modelData.color ?? palette.text
+                font.pixelSize: 10
+                opacity: 0.85
+                background: Rectangle { visible: !!modelData.right; color: palette.base; opacity: 0.8; radius: 2 }
             }
         }
     }
@@ -123,11 +170,24 @@ Item {
         delegate: Label {
             required property int index
             readonly property var tick: index < plot.yTicks.length ? plot.yTicks[index] : null
-            visible: tick !== null && plot.hasData
+            visible: tick !== null && plot.hasData && !root.yTickLabels
             text: tick ? tick.label : ""
             font.pixelSize: 11
             x: plot.x - width - 6
             y: tick ? plot.y + plot.toPixelY(tick.value) - height / 2 : 0
+        }
+    }
+
+    Repeater {
+        model: root.yTickLabels ?? []
+        delegate: Label {
+            required property var modelData
+            readonly property real py: { plot.viewRect; plot.height; return plot.toPixelY(modelData.value) }
+            visible: plot.hasData && py >= -2 && py <= plot.height + 2
+            text: modelData.label
+            font.pixelSize: 11
+            x: plot.x - width - 6
+            y: plot.y + py - height / 2
         }
     }
 

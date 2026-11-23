@@ -17,6 +17,7 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QStyleHints>
 #include <QTimer>
 
 #ifdef Q_OS_ANDROID
@@ -119,9 +120,17 @@ int main(int argc, char** argv)
     const QCommandLineOption saveGraphOpt(QStringLiteral("save-graph"),
                                           QStringLiteral("Save the window as a graph page (.pdf, .png) after --screenshot-delay and quit."),
                                           QStringLiteral("file"));
-    const QCommandLineOption viewOpt(QStringLiteral("view"), QStringLiteral("Initial view: scans, run or surface."), QStringLiteral("view"));
-    parser.addOptions({viewOpt, shotOpt, benchOpt, sizeOpt, setOpt, tiOpt, riOpt, watchOpt, delayOpt, exportOpt, exportAllOpt, saveGraphOpt});
+    const QCommandLineOption viewOpt(QStringLiteral("view"), QStringLiteral("Initial view: scans, run, surface or timing."), QStringLiteral("view"));
+    const QCommandLineOption schemeOpt(QStringLiteral("color-scheme"),
+                                       QStringLiteral("light or dark instead of the system colour scheme."), QStringLiteral("scheme"));
+    parser.addOptions({viewOpt, shotOpt, benchOpt, sizeOpt, setOpt, tiOpt, riOpt, watchOpt, delayOpt, exportOpt, exportAllOpt, saveGraphOpt,
+                       schemeOpt});
     parser.process(app);
+    if (parser.isSet(schemeOpt)) {
+        const QString s = parser.value(schemeOpt).toLower();
+        if (s == QLatin1String("dark")) app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);
+        else if (s == QLatin1String("light")) app.styleHints()->setColorScheme(Qt::ColorScheme::Light);
+    }
 
 #ifdef Q_OS_ANDROID
     QQuickStyle::setStyle(QStringLiteral("Material"));
@@ -191,9 +200,9 @@ int main(int argc, char** argv)
     }
 
     if (parser.isSet(viewOpt)) {
-        const int index = int(QStringList{QStringLiteral("scans"), QStringLiteral("run"), QStringLiteral("surface")}.indexOf(parser.value(viewOpt)));
+        const int index = int(QStringList{QStringLiteral("scans"), QStringLiteral("run"), QStringLiteral("surface"), QStringLiteral("timing")}.indexOf(parser.value(viewOpt)));
         if (index < 0) {
-            std::fprintf(stderr, "--view: expected scans, run or surface\n");
+            std::fprintf(stderr, "--view: expected scans, run, surface or timing\n");
             return 2;
         }
         window->setProperty("viewIndex", index);

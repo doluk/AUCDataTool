@@ -152,6 +152,19 @@ struct FringeAlignment {
 /// (before jump removal), using the first and last scan of `d`. Needs ≥ 2 scans.
 FringeAlignment analyzeFringeAlignment(const Dataset& d, const FringeJumpParams& p);
 
+/// Estimated meniscus of interference (or absorbance) scans that start in the air above
+/// it: with every scan taken relative to its mean over the first points (air: a constant
+/// per scan), the scans agree up to the meniscus and spread apart in the solution column.
+/// Returns the first radius at which the spread over the scans stays above
+/// max(10 × the spread in the air, `minSpread`) for three points; NaN if there is none.
+double estimateMeniscus(const Dataset& d, double minSpread = 0.05);
+
+/// Estimated cell bottom: beyond it the scans turn into noise. Per point the median over the
+/// scans of |second difference|; searching from halfway between `from` (e.g. the meniscus)
+/// and the last point outwards, the first radius at which it stays above 8 × its median
+/// over the column for three points. NaN if the scans stay smooth to the end.
+double estimateCellBottom(const Dataset& d, double from);
+
 // ---------------------------------------------------------------------------------------
 // Scan selection
 // ---------------------------------------------------------------------------------------
@@ -191,6 +204,19 @@ struct Omega2tFit {
     double rms = 0.0;        ///< rms deviation of the used scans, relative to ω²t at the last one
     std::size_t used = 0;    ///< scans in the fit
 };
+
+/// Least-squares straight line y = slope·x + intercept.
+struct LineFit {
+    bool valid = false;
+    double slope = 0.0, intercept = 0.0;
+    double r2 = 0.0;      ///< coefficient of determination (1 if y is constant and matched)
+    double rms = 0.0;     ///< rms residual, units of y
+    std::size_t n = 0;    ///< points used
+};
+
+/// Fits a line through the points with finite x and y (pairs with NaN are skipped).
+/// Needs ≥ 2 points with distinct x.
+LineFit fitLine(std::span<const double> x, std::span<const double> y);
 
 /// Least-squares fit of ω²t against t over the scans whose speed is within 0.5 % of the
 /// median speed (scans during acceleration or deceleration are left out). Needs ≥ 2 scans.

@@ -26,6 +26,7 @@ Targets Windows, macOS, Linux and Android (Qt Quick UI).
 | Live mode: follow a folder while the run is acquiring (new scans, new cells) | done |
 | Spectra: all scans against λ at a radius (draggable), with absorbance/dark current | done |
 | Run conditions: speed, temperature, ω²t per scan against time, ω²t line fit | done |
+| Scan timing (absorbance/intensity, any format): interval to the next scan of any cell, intervals per cell transition, interval between scans of each cell, skipped cells marked | done |
 | 3D surface (Qt Graphs): radius × time (or ω²t) of the scans at one λ, or radius × λ of one scan | done |
 | Export: CSV, Origin ASCII, Beckman XL, UltraScan III `.auc` — current view or a λ range | done |
 | Print graph, save graph (PNG, PDF) | done |

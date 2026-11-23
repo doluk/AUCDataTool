@@ -4,62 +4,70 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Opened channels as a collapsible tree: folder (only when channels come from several
-// folders) → cell → channel. Selecting a channel row sets controller.currentIndex.
+// Opened channels as a collapsible tree: run → optics (what was measured, from which file
+// format) → channel. Runs carry a colour accent that continues down their channel rows;
+// channels show a "cell + channel" badge in the colour of their optics. Selecting a channel
+// row sets controller.currentIndex.
 Pane {
     id: root
     property var controller
+    /// Sidebar pinned (shown beside the plots) or floating (slides in from the edge).
+    property bool pinned: true
+    property bool showPin: true
+    signal pinToggled()
     padding: 0
 
-    // Collapsed node keys ("f:<group>", "c:<group>/<cell>") → true.
+    // Collapsed node keys ("r:<run>", "o:<run>/<optics>") → true.
     property var collapsed: ({})
     readonly property var channels: controller.channels
-    readonly property var groups: {
-        const seen = []
-        for (const ch of channels)
-            if (seen.indexOf(ch.group) < 0) seen.push(ch.group)
-        return seen
-    }
-    readonly property bool showFolders: groups.length > 1
     readonly property var rows: buildRows(channels, collapsed)
 
-    function folderKey(group) { return "f:" + group }
-    function cellKey(group, cell) { return "c:" + group + "/" + cell }
+    readonly property var runPalette: ["#2563eb", "#d97706", "#059669", "#db2777", "#7c3aed", "#0891b2", "#65a30d", "#dc2626"]
+    function opticsColor(optics) {
+        if (optics.startsWith(qsTr("Absorbance"))) return "#2563eb"
+        if (optics.startsWith(qsTr("Intensity"))) return "#d97706"
+        if (optics === qsTr("Interference")) return "#7c3aed"
+        if (optics === qsTr("Fluorescence")) return "#059669"
+        return "#6b7280"
+    }
 
-    // Flattened visible rows. kind: "folder" | "cell" | "channel".
+    function runKey(ch) { return ch.group + "\u0001" + ch.run }
+    function opticsName(ch) { return ch.optics + " · " + ch.source }
+
+    // Flattened visible rows. kind: "run" | "optics" | "channel".
     function buildRows(chs, coll) {
         const out = []
-        const multi = groups.length > 1
-        for (const g of groups) {
+        const runs = []
+        for (const ch of chs)
+            if (runs.indexOf(runKey(ch)) < 0) runs.push(runKey(ch))
+        for (let r = 0; r < runs.length; ++r) {
+            const rk = runs[r]
+            const color = runPalette[r % runPalette.length]
             const idx = []
             for (let i = 0; i < chs.length; ++i)
-                if (chs[i].group === g) idx.push(i)
-            idx.sort((a, b) => chs[a].cell - chs[b].cell
-                     || chs[a].channel.localeCompare(chs[b].channel) || a - b)
-            const fk = folderKey(g)
-            if (multi) {
-                const runs = []
-                for (const i of idx)
-                    if (chs[i].run && runs.indexOf(chs[i].run) < 0) runs.push(chs[i].run)
-                out.push({ kind: "folder", key: fk, depth: 0, label: g, detail: runs.join(", "),
-                           count: idx.length, members: idx })
-                if (coll[fk]) continue
-            }
-            const base = multi ? 1 : 0
-            let k = 0
-            while (k < idx.length) {
-                const cell = chs[idx[k]].cell
-                const members = []
-                while (k < idx.length && chs[idx[k]].cell === cell) members.push(idx[k++])
-                const ck = cellKey(g, cell)
-                const letters = []
+                if (runKey(chs[i]) === rk) idx.push(i)
+            const first = chs[idx[0]]
+            const name = first.run !== "" ? first.run : first.group
+            out.push({ kind: "run", key: "r:" + rk, label: name,
+                       detail: first.group !== name ? first.group : "", tooltip: first.folder,
+                       count: idx.length, members: idx, runColor: color })
+            if (coll["r:" + rk]) continue
+
+            const optics = []
+            for (const i of idx)
+                if (optics.indexOf(opticsName(chs[i])) < 0) optics.push(opticsName(chs[i]))
+            for (const o of optics) {
+                const members = idx.filter(i => opticsName(chs[i]) === o)
+                members.sort((a, b) => chs[a].cell - chs[b].cell || chs[a].channel.localeCompare(chs[b].channel) || a - b)
+                const ok = "o:" + rk + "/" + o
+                const ch0 = chs[members[0]]
+                out.push({ kind: "optics", key: ok, label: ch0.optics, detail: ch0.source,
+                           count: members.length, members: members, runColor: color,
+                           opticsColor: opticsColor(ch0.optics) })
+                if (coll[ok]) continue
                 for (const i of members)
-                    if (letters.indexOf(chs[i].channel) < 0) letters.push(chs[i].channel)
-                out.push({ kind: "cell", key: ck, depth: base, label: qsTr("Cell %1").arg(cell),
-                           detail: letters.join(" "), count: members.length, members: members })
-                if (coll[ck]) continue
-                for (const i of members)
-                    out.push({ kind: "channel", key: "", depth: base + 1, index: i, members: [i] })
+                    out.push({ kind: "channel", key: "", index: i, members: [i], runColor: color,
+                               opticsColor: opticsColor(chs[i].optics) })
             }
         }
         return out
@@ -76,8 +84,8 @@ Pane {
     function allNodeKeys() {
         const keys = []
         for (const ch of channels) {
-            keys.push(folderKey(ch.group))
-            keys.push(cellKey(ch.group, ch.cell))
+            keys.push("r:" + runKey(ch))
+            keys.push("o:" + runKey(ch) + "/" + opticsName(ch))
         }
         return keys
     }
@@ -85,8 +93,8 @@ Pane {
     function reveal(i) {
         if (i < 0 || i >= channels.length) return
         const ch = channels[i]
-        const fk = folderKey(ch.group), ck = cellKey(ch.group, ch.cell)
-        if (collapsed[fk] || collapsed[ck]) setCollapsed([fk, ck], false)
+        const rk = "r:" + runKey(ch), ok = "o:" + runKey(ch) + "/" + opticsName(ch)
+        if (collapsed[rk] || collapsed[ok]) setCollapsed([rk, ok], false)
         for (let r = 0; r < rows.length; ++r)
             if (rows[r].kind === "channel" && rows[r].index === i) {
                 list.positionViewAtIndex(r, ListView.Contain)
@@ -126,6 +134,11 @@ Pane {
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Collapse all")
             }
+            PinButton {
+                visible: root.showPin
+                pinned: root.pinned
+                onClicked: root.pinToggled()
+            }
         }
 
         ListView {
@@ -139,47 +152,111 @@ Pane {
             delegate: ItemDelegate {
                 id: d
                 required property var modelData
-                readonly property bool isChannel: modelData.kind === "channel"
+                required property int index
+                readonly property string kind: modelData.kind
+                readonly property bool isChannel: kind === "channel"
                 readonly property var ch: isChannel ? root.channels[modelData.index] : null
                 readonly property bool expanded: !isChannel && !root.collapsed[modelData.key]
                 // A collapsed node containing the current channel is highlighted instead.
                 readonly property bool containsCurrent: modelData.members.indexOf(root.controller.currentIndex) >= 0
                 width: ListView.view.width
                 highlighted: isChannel ? containsCurrent : (!expanded && containsCurrent)
-                leftPadding: 8 + modelData.depth * 14
-                topPadding: isChannel ? 6 : 4
-                bottomPadding: isChannel ? 6 : 4
+                leftPadding: (kind === "run" ? 10 : kind === "optics" ? 18 : 26)
+                rightPadding: 8
+                topPadding: kind === "run" ? 8 : kind === "optics" ? 4 : 5
+                bottomPadding: kind === "run" ? 6 : kind === "optics" ? 3 : 5
                 onClicked: {
                     if (isChannel) root.controller.currentIndex = modelData.index
                     else root.setCollapsed([modelData.key], expanded)
                 }
+                ToolTip.visible: hovered && kind === "run" && (modelData.tooltip ?? "") !== ""
+                ToolTip.delay: 600
+                ToolTip.text: modelData.tooltip ?? ""
+
+                // Run colour: a band on the left of every row of the run.
+                Rectangle {
+                    x: 0
+                    width: d.kind === "run" ? 5 : 3
+                    height: parent.height
+                    color: d.modelData.runColor
+                    opacity: d.kind === "run" ? 1 : 0.55
+                }
+                // Separator above each run (except the first).
+                Rectangle {
+                    visible: d.kind === "run" && d.index > 0
+                    width: parent.width
+                    height: 1
+                    color: d.palette.mid
+                    opacity: 0.6
+                }
 
                 contentItem: Loader {
-                    sourceComponent: d.isChannel ? channelRow : nodeRow
+                    sourceComponent: d.kind === "run" ? runRow : d.kind === "optics" ? opticsRow : channelRow
                 }
 
                 Component {
-                    id: nodeRow
+                    id: runRow
                     RowLayout {
-                        spacing: 4
+                        spacing: 6
                         Label {
                             text: d.expanded ? "▾" : "▸"
                             opacity: 0.7
-                            Layout.preferredWidth: 12
+                            Layout.alignment: Qt.AlignTop
+                            Layout.preferredWidth: 10
+                        }
+                        ColumnLayout {
+                            spacing: 0
+                            Layout.fillWidth: true
+                            Label {
+                                text: d.modelData.label
+                                font.bold: true
+                                font.pixelSize: 14
+                                color: d.modelData.runColor
+                                elide: Text.ElideMiddle
+                                Layout.fillWidth: true
+                            }
+                            Label {
+                                visible: text !== ""
+                                text: d.modelData.detail
+                                opacity: 0.6
+                                font.pixelSize: 11
+                                elide: Text.ElideMiddle
+                                Layout.fillWidth: true
+                            }
+                        }
+                        Label {
+                            text: d.modelData.count
+                            opacity: 0.55
+                            font.pixelSize: 11
+                            Layout.alignment: Qt.AlignTop
+                        }
+                    }
+                }
+
+                Component {
+                    id: opticsRow
+                    RowLayout {
+                        spacing: 6
+                        Label {
+                            text: d.expanded ? "▾" : "▸"
+                            opacity: 0.6
+                            Layout.preferredWidth: 10
+                        }
+                        Rectangle {
+                            width: 9; height: 9; radius: 4.5
+                            color: d.modelData.opticsColor
                         }
                         Label {
                             text: d.modelData.label
                             font.bold: true
-                            elide: Text.ElideMiddle
-                            Layout.fillWidth: d.modelData.kind === "folder"
-                            Layout.maximumWidth: d.width * 0.6
+                            font.pixelSize: 12
+                            color: d.modelData.opticsColor
                         }
                         Label {
                             text: d.modelData.detail
-                            opacity: 0.55
+                            opacity: 0.6
                             font.pixelSize: 11
                             elide: Text.ElideRight
-                            horizontalAlignment: d.modelData.kind === "folder" ? Text.AlignRight : Text.AlignLeft
                             Layout.fillWidth: true
                         }
                         Label {
@@ -192,29 +269,49 @@ Pane {
 
                 Component {
                     id: channelRow
-                    ColumnLayout {
-                        spacing: 1
-                        RowLayout {
-                            Layout.fillWidth: true
+                    RowLayout {
+                        spacing: 8
+                        // Cell + channel badge, e.g. "2A", in the optics colour.
+                        Rectangle {
+                            Layout.preferredWidth: 34
+                            Layout.preferredHeight: 24
+                            Layout.alignment: Qt.AlignVCenter
+                            radius: 4
+                            color: Qt.alpha(d.modelData.opticsColor, d.highlighted ? 0.9 : 0.15)
+                            border.color: d.modelData.opticsColor
+                            border.width: 1
                             Label {
-                                text: qsTr("Channel %1").arg(d.ch ? d.ch.channel : "")
-                                font.bold: d.highlighted
-                            }
-                            Label {
-                                text: d.ch ? d.ch.run : ""
-                                opacity: 0.55
-                                font.pixelSize: 11
-                                elide: Text.ElideLeft
-                                horizontalAlignment: Text.AlignRight
-                                Layout.fillWidth: true
+                                anchors.centerIn: parent
+                                text: d.ch ? d.ch.cell + d.ch.channel : ""
+                                font.bold: true
+                                font.pixelSize: 13
+                                color: d.highlighted ? "white" : d.modelData.opticsColor
                             }
                         }
-                        Label {
-                            text: d.ch ? d.ch.subtitle : ""
-                            opacity: 0.65
-                            font.pixelSize: 11
-                            elide: Text.ElideRight
+                        ColumnLayout {
+                            spacing: 0
                             Layout.fillWidth: true
+                            Label {
+                                text: d.ch ? (d.ch.description !== "" ? d.ch.description : qsTr("Cell %1, channel %2").arg(d.ch.cell).arg(d.ch.channel)) : ""
+                                font.bold: d.highlighted
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            Label {
+                                text: {
+                                    if (!d.ch) return ""
+                                    const parts = []
+                                    if (d.ch.wavelengthText !== "") parts.push(d.ch.wavelengthText)
+                                    parts.push(d.ch.scanText)
+                                    if (d.ch.isReference) parts.push(qsTr("reference"))
+                                    return parts.join(" · ")
+                                }
+                                opacity: 0.6
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
                         }
                     }
                 }

@@ -35,6 +35,9 @@ set(auc_qml_files
     qml/RunConditionsView.qml
     qml/IconButton.qml
     qml/AxisSettings.qml
+    qml/ScanTimingView.qml
+    qml/OptionSection.qml
+    qml/PinButton.qml
 )
 set(auc_sources
     AppController.h AppController.cpp

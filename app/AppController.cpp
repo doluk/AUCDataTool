@@ -4,6 +4,7 @@
 
 #include "auc/Export.h"
 #include "auc/Processing.h"
+#include "auc/ScanTiming.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -13,6 +14,7 @@
 #include <QPainter>
 #include <QPdfWriter>
 #include <QSaveFile>
+#include <QSet>
 #include <QTime>
 #include <QTextStream>
 #include <QtConcurrent/QtConcurrentRun>
@@ -239,6 +241,37 @@ QVariantList AppController::channels() const
                   : c.absorbanceData          ? tr("absorbance")
                                               : tr("intensity"));
         m.insert(QStringLiteral("subtitle"), parts.join(QStringLiteral(" · ")));
+
+        // Separate fields for the channel list: optics (what was measured), source format,
+        // wavelengths and scans.
+        using auc::DataType;
+        QString optics;
+        switch (c.rawType) {
+        case DataType::RadialAbsorbance: optics = tr("Absorbance"); break;
+        case DataType::RadialIntensity: optics = tr("Intensity"); break;
+        case DataType::Interference: optics = tr("Interference"); break;
+        case DataType::Fluorescence: optics = tr("Fluorescence"); break;
+        case DataType::WavelengthAbsorbance: optics = tr("Absorbance spectra"); break;
+        case DataType::WavelengthIntensity: optics = tr("Intensity spectra"); break;
+        }
+        m.insert(QStringLiteral("optics"), optics);
+        QString source;
+        switch (c.format) {
+        case auc::SourceFormat::Xl: source = tr("Beckman XL"); break;
+        case auc::SourceFormat::Auc: source = tr("openAUC"); break;
+        case auc::SourceFormat::Mwrs: source = tr("MWL .mwrs"); break;
+        case auc::SourceFormat::Mw: source = tr("MWL .mw"); break;
+        }
+        m.insert(QStringLiteral("source"), source);
+        m.insert(QStringLiteral("format"), c.formatName);
+        m.insert(QStringLiteral("isReference"), c.formatName.endsWith(QLatin1String(" reference")));
+        m.insert(QStringLiteral("wavelengthText"),
+                 c.xIsWavelength ? tr("%1–%2 nm").arg(c.radius.empty() ? 0.0 : c.radius.front(), 0, 'f', 0).arg(c.radius.empty() ? 0.0 : c.radius.back(), 0, 'f', 0)
+                 : c.wavelengths.size() > 1
+                     ? tr("%1 λ, %2–%3 nm").arg(c.wavelengths.size()).arg(c.wavelengths.front(), 0, 'f', 0).arg(c.wavelengths.back(), 0, 'f', 0)
+                 : !c.wavelengths.empty() ? tr("%1 nm").arg(c.wavelengths.front(), 0, 'f', 0)
+                                          : QString());
+        m.insert(QStringLiteral("scanText"), tr("%n scan(s)", nullptr, int(c.scans.size())));
         list << m;
     }
     return list;
@@ -315,6 +348,7 @@ void AppController::liveUpdate()
         emit viewChanged();
         reprocess(true);  // keep the user's zoom during a run
     }
+    updateScanTiming();  // other cells of the run may have new scans
     setStatus(tr("Live update: %1").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss"))));
 }
 
@@ -338,6 +372,7 @@ void AppController::closeAll()
     }
     if (m_integralPlot) m_integralPlot->setSeries(nullptr);
     updateRunPlots();
+    updateScanTiming();
     emit channelsChanged();
     emit currentIndexChanged();
     emit datasetChanged();
@@ -395,6 +430,7 @@ void AppController::setCurrentIndex(int i)
     emit viewChanged();
     emit noiseChanged();
     updateRunPlots();
+    updateScanTiming();
 
     // Radius-dependent options: keep them if they fit the new channel.
     if (const auto* c = currentSrc(); c && !c->radius.empty()) {
@@ -787,15 +823,31 @@ AppController::Result AppController::runProcessing(Job job)
         // Fringe-jump correction (S. Xu et al., AUC 2026): the alignment suggestions come
         // from the jitter-corrected scans before the jumps are removed.
         auc::proc::FringeJumpParams fp{o.fringeThreshold, o.fringeR1, o.fringeR2};
-        if (!(fp.r2 > fp.r1) && o.offsetMode == ProcessingOptions::OffsetRegion && !d->radius.empty()) {
-            // No meniscus/bottom given: the solution column starts after the air–air region
+        const bool autoLimits = !(fp.r2 > fp.r1);
+        if (autoLimits && !d->radius.empty()) {
+            // No meniscus/bottom given: the solution column from the estimated meniscus (where
+            // the scans start to differ) to the last point. An air–air baseline region in the
+            // first half lies above the meniscus: the column starts after it at the earliest
             // (inside it every jitter-corrected scan is 0 and would look perfectly aligned).
-            fp.r1 = std::max(o.offsetR1, o.offsetR2);
-            fp.r2 = std::max(d->radius.front(), d->radius.back());
+            const double lo = std::min(d->radius.front(), d->radius.back());
+            const double hi = std::max(d->radius.front(), d->radius.back());
+            double r1 = auc::proc::estimateMeniscus(*d);
+            if (!std::isfinite(r1) || r1 > lo + 0.8 * (hi - lo)) r1 = lo + 0.1 * (hi - lo);
+            if (o.offsetMode == ProcessingOptions::OffsetRegion) {
+                const double air = std::max(o.offsetR1, o.offsetR2);
+                if (air > r1 && air < lo + 0.5 * (hi - lo)) r1 = air;
+            }
+            fp.r1 = r1;
+            // Bottom: where the scans turn into noise, else the last point.
+            const double bottom = auc::proc::estimateCellBottom(*d, r1);
+            fp.r2 = std::isfinite(bottom) && bottom > r1 ? bottom : hi;
         }
         const auc::proc::FringeAlignment a = auc::proc::analyzeFringeAlignment(*d, fp);
         const double align = o.fringeAlign > 0.0 ? o.fringeAlign : a.suggested;
         QVariantMap f;
+        f.insert(QStringLiteral("r1"), fp.r1);
+        f.insert(QStringLiteral("r2"), fp.r2);
+        f.insert(QStringLiteral("limitsAuto"), autoLimits);
         f.insert(QStringLiteral("centre"), a.centre);
         f.insert(QStringLiteral("stableValid"), a.stableValid);
         f.insert(QStringLiteral("stableLo"), a.stableLo);
@@ -1263,8 +1315,9 @@ void AppController::updateRunPlots()
         set(m_speedPlot, nullptr, {});
         set(m_temperaturePlot, nullptr, {});
         set(m_omega2tPlot, nullptr, {});
-        if (!m_runConditions.isEmpty()) {
+        if (!m_runConditions.isEmpty() || m_runSweepLog) {
             m_runConditions.clear();
+            m_runSweepLog = false;
             emit runConditionsChanged();
         }
         return;
@@ -1314,9 +1367,56 @@ void AppController::updateRunPlots()
     // ω²t with the straight line ω²·(t − t₀) through the scans at constant speed.
     const auc::proc::Omega2tFit fit = auc::proc::fitOmega2t(seconds, w2t, rpm);
     for (std::size_t i = 0; i < n; ++i) line[i] = float(fit.slope * seconds[i] + fit.intercept);
-    Curves w2tCurves{{w2tf, QColor(0x05, 0x96, 0x69)}};
-    if (fit.valid) w2tCurves.push_back({line, QColor(0x6b, 0x72, 0x80)});
-    set(m_omega2tPlot, series(std::move(w2tCurves), {tr("ω²t"), tr("fit")}), {{0, points}, {1, dashed}});
+    // Sweep logs (.tr): ω²t at every radius point as a thin line per sweep, on a common
+    // time axis with the scans (scan times precede their sweep, so each sweep stays one
+    // unbroken stretch between them).
+    std::size_t logSweeps = 0;
+    {
+        const auto traces = c->scanTraces();
+        struct Pt {
+            double t, v;
+            bool log;
+        };
+        std::vector<Pt> pts;
+        for (std::size_t i = 0; i < n; ++i) pts.push_back({seconds[i], w2t[i], false});
+        for (const auto& t : traces) {
+            bool any = false;
+            for (std::size_t j = 0; j < t.seconds.size(); ++j)
+                if (std::isfinite(t.seconds[j]) && std::isfinite(t.omega2t[j])) {
+                    pts.push_back({t.seconds[j], t.omega2t[j], true});
+                    any = true;
+                }
+            logSweeps += any ? 1 : 0;
+        }
+        if (logSweeps == 0) {
+            Curves w2tCurves{{w2tf, QColor(0x05, 0x96, 0x69)}};
+            if (fit.valid) w2tCurves.push_back({line, QColor(0x6b, 0x72, 0x80)});
+            set(m_omega2tPlot, series(std::move(w2tCurves), {tr("ω²t"), tr("fit")}), {{0, points}, {1, dashed}});
+        } else {
+            std::stable_sort(pts.begin(), pts.end(), [](const Pt& a, const Pt& b) { return a.t < b.t; });
+            constexpr float fnan = std::numeric_limits<float>::quiet_NaN();
+            auto s = std::make_shared<PlotSeries>();
+            std::vector<float> head(pts.size(), fnan), fitted(pts.size(), fnan), logged(pts.size(), fnan);
+            for (std::size_t i = 0; i < pts.size(); ++i) {
+                s->x.push_back(float(pts[i].t / 60.0));
+                (pts[i].log ? logged : head)[i] = float(pts[i].v);
+                if (fit.valid) fitted[i] = float(fit.slope * pts[i].t + fit.intercept);
+            }
+            auto add = [&](std::vector<float> y, QColor col, int id, const QString& label) {
+                s->y.push_back(std::move(y));
+                s->colors.push_back(col);
+                s->ids.push_back(id);
+                s->labels.push_back(label);
+            };
+            add(std::move(logged), QColor(0x86, 0xd1, 0xb4), 2, tr("ω²t logged per radius (.tr)"));
+            add(std::move(head), QColor(0x05, 0x96, 0x69), 0, tr("ω²t"));
+            if (fit.valid) add(std::move(fitted), QColor(0x6b, 0x72, 0x80), 1, tr("fit"));
+            s->computeBounds();
+            CurveStyle logLine;
+            logLine.width = 1.5f;
+            set(m_omega2tPlot, s, {{0, points}, {1, dashed}, {2, logLine}});
+        }
+    }
 
     const auto [rmin, rmax] = std::minmax_element(rpm.begin(), rpm.end());
     const auto [tmin, tmax] = std::minmax_element(temp.begin(), temp.end());
@@ -1330,11 +1430,473 @@ void AppController::updateRunPlots()
                      .arg(fit.rpm, 0, 'f', 0)
                      .arg(fit.t0, 0, 'f', 1)
                      .arg(fit.rms * 100.0, 0, 'g', 2);
+    if (logSweeps) parts << tr("ω²t logged per radius point in %n sweep(s) (.tr)", nullptr, int(logSweeps));
     const QString text = parts.join(QStringLiteral(" · "));
-    if (text != m_runConditions) {
+    if (text != m_runConditions || m_runSweepLog != (logSweeps > 0)) {
         m_runConditions = text;
+        m_runSweepLog = logSweeps > 0;
         emit runConditionsChanged();
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// Scan timing (XL and openAUC radial absorbance/intensity)
+// ---------------------------------------------------------------------------------------
+
+namespace {
+
+/// Absorbance, pseudo-absorbance or intensity against radius, any file format (not
+/// interference or fluorescence, not wavelength scans).
+bool timingCapable(const auc::ChannelSource& c)
+{
+    return c.valueLabel.isEmpty() && !c.xIsWavelength
+        && (c.rawType == auc::DataType::RadialAbsorbance || c.rawType == auc::DataType::RadialIntensity);
+}
+
+QColor timingColor(std::size_t k)
+{
+    static const QColor colors[] = {QColor(0xe6, 0x9f, 0x00), QColor(0xd9, 0x70, 0x9f), QColor(0x4b, 0x3a, 0xa6),
+                                    QColor(0x2b, 0x7b, 0xd6), QColor(0x1a, 0xaa, 0x7a), QColor(0x12, 0x85, 0x0f),
+                                    QColor(0xe8, 0x61, 0x3c), QColor(0x7a, 0x7a, 0x7a)};
+    return colors[k % std::size(colors)];
+}
+
+/// Deterministic jitter in [−0.5, 0.5) for the strip plot.
+float jitter(std::size_t i)
+{
+    std::uint32_t h = std::uint32_t(i) * 2654435761u;
+    h ^= h >> 15;
+    h *= 2246822519u;
+    h ^= h >> 13;
+    return float(h & 0xffff) / 65536.0f - 0.5f;
+}
+
+}  // namespace
+
+bool AppController::hasScanTiming() const
+{
+    const auto* c = currentSrc();
+    return c && timingCapable(*c);
+}
+
+void AppController::setTimingPlot(ScanPlot* p)
+{
+    if (m_timingPlot == p) return;
+    m_timingPlot = p;
+    emit timingPlotsChanged();
+    updateScanTiming(true);
+}
+
+void AppController::setTransitionPlot(ScanPlot* p)
+{
+    if (m_transitionPlot == p) return;
+    m_transitionPlot = p;
+    emit timingPlotsChanged();
+    updateScanTiming(true);
+}
+
+void AppController::setSweepPlot(ScanPlot* p)
+{
+    if (m_sweepPlot == p) return;
+    m_sweepPlot = p;
+    emit timingPlotsChanged();
+    updateScanTiming(true);
+}
+
+void AppController::setSweepSpeedPlot(ScanPlot* p)
+{
+    if (m_sweepSpeedPlot == p) return;
+    m_sweepSpeedPlot = p;
+    emit timingPlotsChanged();
+    updateScanTiming(true);
+}
+
+void AppController::setTimingCellPlot(int index, ScanPlot* plot)
+{
+    m_timingCellPlots[index] = plot;
+    if (!plot) return;
+    CurveStyle s;
+    s.marker = CurveStyle::Circle;
+    s.markerSize = 3.5f;
+    plot->setCurveStyles({{0, s}});
+    plot->setSeries(index >= 0 && std::size_t(index) < m_timing.cellSeries.size() ? m_timing.cellSeries[std::size_t(index)] : nullptr,
+                    false);
+}
+
+void AppController::updateScanTiming(bool force)
+{
+    using namespace auc::timing;
+    const auc::ChannelSource* cur = currentSrc();
+
+    // The run: the absorbance/intensity channels of the current channel's folder.
+    std::vector<const auc::ChannelSource*> run;
+    qsizetype files = 0;
+    if (cur && timingCapable(*cur))
+        for (const Entry& e : m_entries)
+            if (timingCapable(*e.src) && e.src->folder == cur->folder) {
+                run.push_back(e.src.get());
+                files += e.src->files.size();
+            }
+    const QString key = run.empty() ? QString() : QStringLiteral("%1|%2|%3").arg(cur->folder).arg(run.size()).arg(files);
+    if (!force && key == m_timing.key) return;
+    // Keep the zoom when the same run only grew (live mode).
+    const bool keep = !force && !key.isEmpty() && m_timing.key.section(QLatin1Char('|'), 0, 0) == cur->folder;
+    m_timing = Timing{};
+    m_timing.key = key;
+
+    Analysis a;
+    if (!run.empty()) {
+        std::vector<Slot> cellSlots;
+        for (const auto* c : run) {
+            // One list per wavelength (scanned separately), or one for all of them
+            // (multi-wavelength detector: all wavelengths recorded at once).
+            const auto per = c->wavelengthScans();
+            const bool atOnce = per.size() == 1 && c->wavelengths.size() > 1;
+            for (std::size_t w = 0; w < per.size() && w < c->wavelengths.size(); ++w) {
+                Slot s{c->cell, c->wavelengths[w], {}, c->channel, atOnce ? c->wavelengths.back() : c->wavelengths[w]};
+                for (const auc::ScanInfo& si : per[w]) s.scans.push_back({si.seconds, si.number});
+                cellSlots.push_back(std::move(s));
+            }
+        }
+        a = analyze(std::move(cellSlots));
+    }
+
+    if (!a.events.empty()) {
+        const std::size_t ns = a.cellSlots.size();
+        // Slot names show the channel / wavelength only where a cell has several of them.
+        bool multiWl = false, multiCh = false;
+        for (std::size_t k = 0; k < ns; ++k)
+            for (std::size_t l = 0; l < ns; ++l) {
+                const Slot &p = a.cellSlots[k], &q = a.cellSlots[l];
+                if (l == k || p.cell != q.cell) continue;
+                if (std::abs(p.wavelength - q.wavelength) >= 0.05) multiWl = true;
+                else if (p.channel != q.channel) multiCh = true;
+            }
+        // Channels recorded in the same scans (one slot): "1 A+B".
+        bool merged = false;
+        for (const Slot& s : a.cellSlots) merged |= s.channels.size() > 1;
+        auto cellName = [&](std::size_t k) {
+            const Slot& s = a.cellSlots[k];
+            if (s.channels.size() > 1) {
+                QStringList chs;
+                for (char c : s.channels) chs << QString(QLatin1Char(c));
+                return QStringLiteral("%1 %2").arg(s.cell).arg(chs.join(QLatin1Char('+')));
+            }
+            return multiCh || merged ? QStringLiteral("%1%2").arg(s.cell).arg(QLatin1Char(s.channel)) : QString::number(s.cell);
+        };
+        auto wavelengthText = [&](const Slot& s) {
+            return s.wavelengthTo > s.wavelength + 0.05
+                       ? tr("%1–%2 nm at once").arg(s.wavelength, 0, 'f', 0).arg(s.wavelengthTo, 0, 'f', 0)
+                       : tr("%1 nm").arg(s.wavelength, 0, 'f', 0);
+        };
+        // Colours by cell (in acquisition order): with several wavelengths per cell, one colour
+        // per cell/wavelength would repeat the palette and hide which cell a point belongs to.
+        QStringList cellOrder;  // cell names ("4", or "1A" with several channels per cell)
+        for (std::size_t k = 0; k < ns; ++k)
+            if (!cellOrder.contains(cellName(k))) cellOrder << cellName(k);
+        auto color = [&](std::size_t k) { return timingColor(std::size_t(cellOrder.indexOf(cellName(k)))); };
+        auto slotName = [&](std::size_t k) {
+            const Slot& s = a.cellSlots[k];
+            return multiWl ? QStringLiteral("%1/%2").arg(cellName(k)).arg(s.wavelength, 0, 'f', 0) : cellName(k);
+        };
+        const double span = a.events.back().seconds;
+        const bool hours = span > 3 * 3600.0;
+        const double unit = hours ? 3600.0 : 60.0;
+        m_timing.timeLabel = hours ? tr("Elapsed time at scan (h)") : tr("Elapsed time at scan (min)");
+        auto fmt = [](double s) { return QString::number(s, 'f', std::abs(s - std::round(s)) < 0.05 ? 0 : 1); };
+
+        // Interleaved: interval to the next scan, one curve per cell just scanned.
+        {
+            auto s = std::make_shared<PlotSeries>();
+            s->x.reserve(a.events.size());
+            for (const Event& e : a.events) s->x.push_back(float(e.seconds / unit));
+            for (std::size_t k = 0; k < ns; ++k) {
+                std::vector<float> y(a.events.size(), std::numeric_limits<float>::quiet_NaN());
+                for (std::size_t i = 0; i < a.events.size(); ++i)
+                    if (std::size_t(a.events[i].slot) == k && std::isfinite(a.next[i])) y[i] = float(a.next[i]);
+                const QString label = tr("after cell %1").arg(slotName(k));
+                s->y.push_back(std::move(y));
+                s->colors.push_back(color(k));
+                s->ids.push_back(int(k));
+                s->labels.push_back(label);
+            }
+            for (qsizetype c = 0; c < cellOrder.size(); ++c)
+                m_timing.legend.append(QVariantMap{{QStringLiteral("label"), tr("after cell %1").arg(cellOrder[c])},
+                                                   {QStringLiteral("color"), timingColor(std::size_t(c))}});
+            s->computeBounds();
+            m_timing.interleaved = s;
+        }
+
+        // Transitions: one row each (y = −row, jittered), intervals on the shared, sorted x.
+        {
+            struct Pt {
+                float x;
+                std::size_t row;
+                float y;
+            };
+            std::vector<Pt> pts;
+            for (std::size_t r = 0; r < a.transitions.size(); ++r) {
+                const Transition& t = a.transitions[r];
+                for (std::size_t i = 0; i < t.intervals.size(); ++i)
+                    pts.push_back({float(t.intervals[i]), r, -float(r) + 0.6f * jitter(pts.size())});
+                QString label = QStringLiteral("%1→%2").arg(slotName(std::size_t(t.from)), slotName(std::size_t(t.to)));
+                if (!t.skipped.empty()) {
+                    QStringList sk;
+                    for (int k : t.skipped) sk << slotName(std::size_t(k));
+                    label += tr(" (%1 skipped)").arg(sk.join(QStringLiteral(", ")));
+                } else if (!t.regular) {
+                    label += tr(" (irregular)");
+                }
+                m_timing.transitionTicks.append(QVariantMap{{QStringLiteral("value"), -double(r)}, {QStringLiteral("label"), label}});
+                m_timing.transitionNotes.append(QVariantMap{{QStringLiteral("y"), -double(r)},
+                                                            {QStringLiteral("right"), true},
+                                                            {QStringLiteral("text"), tr("med %1 s  n=%2").arg(fmt(t.median)).arg(t.intervals.size())}});
+            }
+            std::sort(pts.begin(), pts.end(), [](const Pt& p, const Pt& q) { return p.x < q.x; });
+            auto s = std::make_shared<PlotSeries>();
+            for (const Pt& p : pts) s->x.push_back(p.x);
+            for (std::size_t r = 0; r < a.transitions.size(); ++r) {
+                std::vector<float> y(pts.size(), std::numeric_limits<float>::quiet_NaN());
+                for (std::size_t i = 0; i < pts.size(); ++i)
+                    if (pts[i].row == r) y[i] = pts[i].y;
+                s->y.push_back(std::move(y));
+                s->colors.push_back(color(std::size_t(a.transitions[r].from)));
+                s->ids.push_back(int(r));
+                s->labels.push_back(m_timing.transitionTicks[qsizetype(r)].toMap().value(QStringLiteral("label")).toString());
+            }
+            s->computeBounds();
+            m_timing.transitions = s;
+        }
+
+        // Skips: fixed markers at the scan before the gap.
+        QMap<int, int> skippedCount;
+        for (const Skip& sk : a.skips) {
+            for (int k : sk.skipped) ++skippedCount[k];
+            m_timing.skipMarkers.append(QVariantMap{{QStringLiteral("value"), sk.seconds / unit},
+                                                    {QStringLiteral("color"), QColor(0xdc, 0x26, 0x26)},
+                                                    {QStringLiteral("label"), QString()},
+                                                    {QStringLiteral("key"), QString()},
+                                                    {QStringLiteral("fixed"), true}});
+        }
+
+        // Per cell: interval between consecutive scans of the same cell; outliers labelled.
+        for (std::size_t k = 0; k < ns; ++k) {
+            const Slot& sl = a.cellSlots[k];
+            const double med = a.slotMedian[k];
+            auto s = std::make_shared<PlotSeries>();
+            std::vector<float> y;
+            struct Peak {
+                double dt;
+                QVariantMap note;
+            };
+            std::vector<Peak> peaks;
+            for (std::size_t j = 0; j + 1 < sl.scans.size(); ++j) {
+                const double dt = sl.scans[j + 1].seconds - sl.scans[j].seconds;
+                s->x.push_back(float(sl.scans[j].seconds / unit));
+                y.push_back(float(dt));
+                if (std::isfinite(med) && dt > 1.25 * med && dt - med > 5.0) {
+                    QString text = fmt(dt);
+                    const int n0 = sl.scans[j].number, n1 = sl.scans[j + 1].number;
+                    if (n1 - n0 > 1) text += QStringLiteral(" (s%1→%2)").arg(n0).arg(n1);
+                    peaks.push_back({dt, QVariantMap{{QStringLiteral("x"), sl.scans[j].seconds / unit},
+                                                     {QStringLiteral("y"), dt},
+                                                     {QStringLiteral("text"), text}}});
+                }
+            }
+            // At most 40 labels per cell, the largest.
+            std::sort(peaks.begin(), peaks.end(), [](const Peak& p, const Peak& q) { return p.dt > q.dt; });
+            QVariantList notes;
+            for (std::size_t i = 0; i < peaks.size() && i < 40; ++i) notes.append(peaks[i].note);
+            if (!y.empty()) {
+                s->y.push_back(std::move(y));
+                s->colors.push_back(color(k));
+                s->ids.push_back(0);
+                s->labels.push_back(tr("cell %1").arg(slotName(k)));
+                s->computeBounds();
+                m_timing.cellSeries.push_back(s);
+            } else {
+                m_timing.cellSeries.push_back(nullptr);
+            }
+            m_timing.cells.append(QVariantMap{
+                {QStringLiteral("title"), tr("Cell %1").arg(cellName(k))},
+                {QStringLiteral("info"), tr("%1 · median %2 s · n = %3")
+                                             .arg(wavelengthText(sl))
+                                             .arg(std::isfinite(med) ? fmt(med) : QStringLiteral("–"))
+                                             .arg(sl.scans.empty() ? 0 : sl.scans.size() - 1)},
+                {QStringLiteral("color"), color(k)},
+                {QStringLiteral("notes"), notes}});
+        }
+
+        // Summary
+        QStringList order;
+        for (std::size_t k = 0; k < ns; ++k) order << slotName(k);
+        QStringList parts;
+        QSet<int> cells;
+        for (const Slot& s : a.cellSlots) cells.insert(s.cell);
+        parts << tr("%1 · %n cell(s)", nullptr, int(cells.size())).arg(cur->runId);
+        parts << tr("%1 scans over %2 %3").arg(a.events.size()).arg(span / unit, 0, 'f', 1).arg(hours ? tr("h") : tr("min"));
+        parts << tr("order %1").arg(order.join(QStringLiteral("→")));
+        std::vector<double> cycles;
+        for (double m : a.slotMedian)
+            if (std::isfinite(m)) cycles.push_back(m);
+        if (!cycles.empty()) parts << tr("median cycle %1 s").arg(fmt(median(cycles)));
+        if (a.skips.empty()) {
+            parts << tr("no skipped scans");
+        } else {
+            QStringList sk;
+            for (auto it = skippedCount.cbegin(); it != skippedCount.cend(); ++it)
+                sk << tr("cell %1 ×%2").arg(slotName(std::size_t(it.key()))).arg(it.value());
+            parts << tr("skipped: %1 (red dashed lines)").arg(sk.join(QStringLiteral(", ")));
+        }
+        if (merged) parts << tr("A+B: channels recorded in the same scans (identical times)");
+        if (a.integerSeconds) parts << tr("times are whole seconds (±0.5 s per scan)");
+        m_timing.summary = parts.join(QStringLiteral(" · "));
+
+        // Sweep logs (.tr, multi-wavelength detector): from the current channel, else the
+        // first channel of the run that has them. One sweep covers all channels read in it.
+        std::vector<auc::ScanTrace> traces;
+        const auc::ChannelSource* traced = nullptr;
+        for (const auc::ChannelSource* c : run) {
+            if (c != cur && traced) continue;
+            auto t = c->scanTraces();
+            if (t.empty()) continue;
+            traces = std::move(t);
+            traced = c;
+            if (c == cur) break;
+        }
+        if (traced) {
+            constexpr float fnan = std::numeric_limits<float>::quiet_NaN();
+            const std::size_t np = traced->radius.size();
+            std::size_t nt = 0;
+            for (const auto& t : traces) nt += t.seconds.empty() ? 0 : 1;
+            // Time since the sweep start against radius, one curve per scan.
+            auto sw = std::make_shared<PlotSeries>();
+            for (double r : traced->radius) sw->x.push_back(float(r));
+            // Rotor speed against run time: all logs in a row, a gap between sweeps.
+            auto sp = std::make_shared<PlotSeries>();
+            std::vector<float> rpm;
+            std::vector<double> durations, pauses;
+            double prevEnd = std::numeric_limits<double>::quiet_NaN(), rpmLo = 1e300, rpmHi = -1e300;
+            std::size_t k = 0;
+            for (const auto& t : traces) {
+                if (t.seconds.empty()) {
+                    prevEnd = std::numeric_limits<double>::quiet_NaN();
+                    continue;
+                }
+                const double t0 = t.start(), t1 = t.end();
+                std::vector<float> y(np, fnan);
+                for (std::size_t j = 0; j < np && j < t.seconds.size(); ++j) y[j] = float(t.seconds[j] - t0);
+                sw->y.push_back(std::move(y));
+                sw->colors.push_back(Colormap::color(Colormap::Kind(std::clamp(m_optColormap, 0, 3)), nt > 1 ? double(k) / double(nt - 1) : 0.0));
+                sw->ids.push_back(int(k));
+                sw->labels.push_back(tr("scan %1").arg(t.number));
+                ++k;
+                durations.push_back(t1 - t0);
+                if (std::isfinite(prevEnd)) pauses.push_back(t0 - prevEnd);
+                prevEnd = t1;
+                if (!sp->x.empty()) {  // gap
+                    sp->x.push_back(float(t0 / unit));
+                    rpm.push_back(fnan);
+                }
+                for (std::size_t j = 0; j < t.seconds.size(); ++j) {
+                    if (!std::isfinite(t.seconds[j]) || !std::isfinite(t.rpm[j])) continue;  // dropout
+                    sp->x.push_back(float(t.seconds[j] / unit));
+                    rpm.push_back(float(t.rpm[j]));
+                    rpmLo = std::min(rpmLo, t.rpm[j]);
+                    rpmHi = std::max(rpmHi, t.rpm[j]);
+                }
+            }
+            // Straight line per sweep: time against radius. Its slope gives the time per
+            // radial position; R² and the rms residual how steadily the detector moves.
+            std::vector<double> slopes, r2s, offsets;
+            double ss = 0;
+            std::size_t nres = 0;
+            const std::span<const double> rad(traced->radius);
+            for (const auto& t : traces) {
+                if (t.seconds.empty()) continue;
+                const std::size_t m = std::min(np, t.seconds.size());
+                const auto f = auc::proc::fitLine(rad.first(m), std::span<const double>(t.seconds).first(m));
+                if (!f.valid || f.n < 3) continue;
+                slopes.push_back(f.slope);
+                r2s.push_back(f.r2);
+                offsets.push_back(f.intercept + f.slope * rad.front() - t.start());
+                ss += f.rms * f.rms * double(f.n);
+                nres += f.n;
+            }
+            QString fitText;
+            if (!slopes.empty() && np > 1) {
+                const double b = median(slopes), off = median(offsets);
+                std::vector<double> steps;
+                for (std::size_t j = 1; j < np; ++j) steps.push_back(rad[j] - rad[j - 1]);
+                const double step = median(steps);
+                const auto [bLo, bHi] = std::minmax_element(slopes.begin(), slopes.end());
+                const double r2min = *std::min_element(r2s.begin(), r2s.end());
+                std::vector<float> fitY(np);
+                for (std::size_t j = 0; j < np; ++j) fitY[j] = float(off + b * (rad[j] - rad.front()));
+                sw->y.push_back(std::move(fitY));
+                sw->colors.push_back(QColor(0x37, 0x41, 0x51));
+                sw->ids.push_back(-1);
+                sw->labels.push_back(tr("linear fit (median)"));
+                fitText = tr("linear fit: %1 s per radial position (Δr %2 cm, %3 s/cm; per sweep %4–%5 s) · R² %6 (min %7) · rms %8 s")
+                              .arg(b * step, 0, 'f', 4)
+                              .arg(step, 0, 'f', 4)
+                              .arg(b, 0, 'f', 2)
+                              .arg(*bLo * step, 0, 'f', 4)
+                              .arg(*bHi * step, 0, 'f', 4)
+                              .arg(median(r2s), 0, 'f', 6)
+                              .arg(r2min, 0, 'f', 6)
+                              .arg(std::sqrt(ss / double(nres)), 0, 'f', 3);
+            }
+            sw->computeBounds();
+            sp->y.push_back(std::move(rpm));
+            sp->colors.push_back(timingColor(0));
+            sp->ids.push_back(0);
+            sp->labels.push_back(tr("rotor speed"));
+            sp->computeBounds();
+            m_timing.sweeps = sw;
+            m_timing.sweepSpeed = sp;
+            QStringList info;
+            info << tr("%n sweep log(s)", nullptr, int(nt));
+            if (!durations.empty()) info << tr("sweep %1 s (median)").arg(median(durations), 0, 'f', 1);
+            if (!pauses.empty()) info << tr("pause between sweeps %1 s (median)").arg(median(pauses), 0, 'f', 1);
+            if (rpmHi >= rpmLo) info << tr("speed during sweeps %1–%2 rpm").arg(rpmLo, 0, 'f', 0).arg(rpmHi, 0, 'f', 0);
+            m_timing.sweepInfo = info.join(QStringLiteral(" · "));
+            if (!fitText.isEmpty()) m_timing.sweepInfo += QStringLiteral("<br>") + fitText;
+        }
+    }
+
+    auto markersOnly = [](float size, std::size_t count) {
+        CurveStyle s;
+        s.marker = CurveStyle::Circle;
+        s.markerSize = size;
+        s.line = CurveStyle::NoLine;
+        QHash<int, CurveStyle> styles;
+        for (std::size_t k = 0; k < count; ++k) styles.insert(int(k), s);
+        return styles;
+    };
+    if (m_timingPlot) {
+        m_timingPlot->setCurveStyles(markersOnly(4.0f, m_timing.interleaved ? m_timing.interleaved->y.size() : 0));
+        m_timingPlot->setSeries(m_timing.interleaved, keep);
+    }
+    if (m_transitionPlot) {
+        m_transitionPlot->setCurveStyles(markersOnly(3.0f, m_timing.transitions ? m_timing.transitions->y.size() : 0));
+        m_transitionPlot->setSeries(m_timing.transitions, keep);
+    }
+    if (m_sweepPlot) {
+        CurveStyle fitStyle;
+        fitStyle.line = CurveStyle::Dash;
+        fitStyle.width = 2.0f;
+        m_sweepPlot->setCurveStyles({{-1, fitStyle}});
+        m_sweepPlot->setSeries(m_timing.sweeps, keep);
+    }
+    if (m_sweepSpeedPlot) m_sweepSpeedPlot->setSeries(m_timing.sweepSpeed, keep);
+    // Cell plots: refresh the registered ones (delegates added for new cells register themselves).
+    for (auto it = m_timingCellPlots.begin(); it != m_timingCellPlots.end(); ++it)
+        if (it.value()) {
+            const std::size_t i = std::size_t(it.key());
+            it.value()->setSeries(i < m_timing.cellSeries.size() ? m_timing.cellSeries[i] : nullptr, keep);
+        }
+    emit scanTimingChanged();
 }
 
 void AppController::setSpectrumPlot(ScanPlot* p)
