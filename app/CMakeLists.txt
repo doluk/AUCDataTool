@@ -126,6 +126,15 @@ install(TARGETS aucdatatool
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
+# Linux desktop integration: launcher and icon (freedesktop.org application id). The
+# .deb/.rpm install to /opt and link them into /usr/share (linux/postinst).
+if(UNIX AND NOT APPLE)
+    install(FILES linux/io.github.doluk.AUCDataTool.desktop
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES linux/io.github.doluk.AUCDataTool.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+endif()
+
 # Bundle Qt libraries, plugins and QML imports next to the executable at install time
 # (windeployqt / macdeployqt / Qt's own Linux deployment, the latter needs Qt >= 6.5).
 # Distribution packages that depend on system Qt set AUC_DEPLOY_QT=OFF.

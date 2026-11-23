@@ -1,0 +1,17 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Lukas Dobler
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# .deb/.rpm: the application lives in /opt/AUCDataTool (bundled Qt). Make the launcher,
+# its icon and the command visible where desktops and shells look for them.
+set -e
+P=/opt/AUCDataTool
+ID=io.github.doluk.AUCDataTool
+ICONS=/usr/share/icons/hicolor/scalable/apps
+mkdir -p /usr/bin /usr/share/applications "$ICONS"
+ln -sf "$P/bin/AUCDataTool" /usr/bin/AUCDataTool
+ln -sf "$P/share/applications/$ID.desktop" "/usr/share/applications/$ID.desktop"
+ln -sf "$P/share/icons/hicolor/scalable/apps/$ID.svg" "$ICONS/$ID.svg"
+if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database -q /usr/share/applications || true; fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true; fi
+exit 0

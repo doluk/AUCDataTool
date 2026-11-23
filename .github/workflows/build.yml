@@ -48,10 +48,23 @@ jobs:
 
       - name: Install rpmbuild
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y rpm
+        run: sudo apt-get update && sudo apt-get install -y rpm desktop-file-utils
+
+      - name: Validate desktop file
+        if: runner.os == 'Linux'
+        run: desktop-file-validate app/linux/io.github.doluk.AUCDataTool.desktop
 
       - name: Package
         run: cpack --config build/CPackConfig.cmake -C Release -B build/package
+
+      - name: Check Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          dpkg-deb -c build/package/*.deb | grep -E 'share/applications/io.github.doluk.AUCDataTool.desktop'
+          dpkg-deb -c build/package/*.deb | grep -E 'share/icons/hicolor/scalable/apps/io.github.doluk.AUCDataTool.svg'
+          dpkg-deb -I build/package/*.deb postinst | grep -q 'ln -sf'
+          rpm -qp --scripts build/package/*.rpm | grep -q 'ln -sf'
 
       - name: Upload installer
         uses: actions/upload-artifact@v4

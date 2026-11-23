@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- SPDX-FileCopyrightText: 2026 Lukas Dobler -->
+  <!-- SPDX-License-Identifier: LGPL-3.0-or-later -->
+  <!-- Sedimentation boundaries moving outwards over time, as in the scan plot. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#1e3a8a"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="224" height="224" rx="48" fill="url(#bg)"/>
+  <path d="M56 60 V196 H204" fill="none" stroke="#bfdbfe" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/>
+  <g fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M70 176 C 88 176 90 84 108 84 H198" stroke="#fde725"/>
+    <path d="M70 176 C 112 176 114 94 134 94 H198" stroke="#7ad151"/>
+    <path d="M70 176 C 138 176 140 104 160 104 H198" stroke="#22d3ee"/>
+  </g>
+</svg>

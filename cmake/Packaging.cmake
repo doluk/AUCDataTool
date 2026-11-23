@@ -35,6 +35,13 @@ else()
     set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_LIST_DIR}/CPackOptions.cmake")
 
     # Runtime requirements of the bundled Qt xcb platform plugin.
+    # Launcher, icon and command linked from /opt into /usr (see app/linux/postinst).
+    set(_auc_linux "${PROJECT_SOURCE_DIR}/app/linux")
+    set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${_auc_linux}/postinst;${_auc_linux}/prerm")
+    set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION ON)
+    set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${_auc_linux}/postinst")
+    set(CPACK_RPM_PRE_UNINSTALL_SCRIPT_FILE "${_auc_linux}/prerm")
+
     set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
     set(CPACK_DEBIAN_PACKAGE_SECTION "science")
     set(CPACK_DEBIAN_PACKAGE_DEPENDS

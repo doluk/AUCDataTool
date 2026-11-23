@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=AUCDataTool
+GenericName=AUC Data Viewer
+Comment=Viewer for analytical ultracentrifugation raw data
+Exec=AUCDataTool %F
+Icon=io.github.doluk.AUCDataTool
+Terminal=false
+Categories=Science;Chemistry;Physics;DataVisualization;Qt;
+Keywords=AUC;ultracentrifugation;sedimentation;absorbance;interference;
+StartupWMClass=AUCDataTool

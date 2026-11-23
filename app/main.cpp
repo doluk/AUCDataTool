@@ -93,6 +93,8 @@ int main(int argc, char** argv)
     app.setOrganizationName(QStringLiteral("AG Coelfen"));
     app.setApplicationName(QStringLiteral("AUCDataTool"));
     app.setApplicationVersion(QStringLiteral(PROJECT_VERSION));
+    // Wayland app id: matches the installed .desktop file (launcher icon, taskbar grouping).
+    QGuiApplication::setDesktopFileName(QStringLiteral("io.github.doluk.AUCDataTool"));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Viewer for analytical ultracentrifugation data"));
