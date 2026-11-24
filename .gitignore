@@ -79,3 +79,7 @@ compile_commands.json
 
 # Flatpak
 .flatpak-builder/
+
+# Local tool configuration and reference documents
+.mcp.json
+/*.pdf

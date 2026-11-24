@@ -46,7 +46,7 @@ struct ChannelSettings {
     int refFirst = 0, refLast = -1;
     double refR1 = 0.0, refR2 = 0.0;  ///< cm, region for ReferenceMode::RadialArea
     bool darkSubtracted = false;
-    QHash<int, CurveStyle> curveStyles;  ///< individual scan styles, by scan index
+    QHash<int, QVariantMap> curveStyles;  ///< individual scan style changes, by scan index
     bool initialised = false;
 };
 
@@ -266,6 +266,7 @@ public:
     void setSweepSpeedPlot(ScanPlot* p);
     /// Registers the plot of cell `index` of timingCells (called by its delegate).
     Q_INVOKABLE void setTimingCellPlot(int index, ScanPlot* plot);
+    Q_INVOKABLE ScanPlot* timingCellPlot(int index) const;
 
     int scanCount() const;
     double radiusMin() const;

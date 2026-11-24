@@ -12,6 +12,7 @@ Item {
     readonly property alias speedPlot: speedView.plot
     readonly property alias temperaturePlot: temperatureView.plot
     readonly property alias omega2tPlot: omega2tView.plot
+    signal plotActivated(var plot)
 
     ColumnLayout {
         anchors.fill: parent
@@ -37,6 +38,7 @@ Item {
                 xLabel: qsTr("Time (min)")
                 yLabel: qsTr("Speed (rpm)")
                 placeholder: qsTr("Rotor speed per scan")
+                onActivated: root.plotActivated(plot)
                 Label {
                     anchors.right: parent.right
                     anchors.top: parent.top
@@ -55,6 +57,7 @@ Item {
                 xLabel: qsTr("Time (min)")
                 yLabel: qsTr("Temperature (°C)")
                 placeholder: qsTr("Temperature per scan")
+                onActivated: root.plotActivated(plot)
             }
             PlotView {
                 id: omega2tView
@@ -63,6 +66,7 @@ Item {
                 xLabel: qsTr("Time (min)")
                 yLabel: qsTr("ω²t (rad²/s)")
                 placeholder: qsTr("ω²t per scan")
+                onActivated: root.plotActivated(plot)
                 Label {
                     anchors.right: parent.right
                     anchors.top: parent.top

@@ -9,7 +9,9 @@ case "$1" in
     remove|0)
         ID=io.github.doluk.AUCDataTool
         rm -f /usr/bin/AUCDataTool "/usr/share/applications/$ID.desktop" \
-              "/usr/share/icons/hicolor/scalable/apps/$ID.svg"
+              "/usr/share/icons/hicolor/scalable/apps/$ID.svg" \
+              "/usr/share/mime/packages/$ID.xml"
+        if command -v update-mime-database >/dev/null 2>&1; then update-mime-database /usr/share/mime >/dev/null 2>&1 || true; fi
         if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database -q /usr/share/applications || true; fi
         ;;
 esac

@@ -37,6 +37,82 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.auc" />
+                <data android:pathPattern=".*\\..*\\.auc" />
+                <data android:pathPattern=".*\\..*\\..*\\.auc" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.auc" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\.auc" />
+                <data android:pathPattern=".*\\.AUC" />
+                <data android:pathPattern=".*\\.mw" />
+                <data android:pathPattern=".*\\.MW" />
+                <data android:pathPattern=".*\\.mwrs" />
+                <data android:pathPattern=".*\\.MWRS" />
+                <data android:pathPattern=".*\\.ip1" />
+                <data android:pathPattern=".*\\.ip2" />
+                <data android:pathPattern=".*\\.ip3" />
+                <data android:pathPattern=".*\\.ip4" />
+                <data android:pathPattern=".*\\.ip5" />
+                <data android:pathPattern=".*\\.ip6" />
+                <data android:pathPattern=".*\\.ip7" />
+                <data android:pathPattern=".*\\.ip8" />
+                <data android:pathPattern=".*\\.IP1" />
+                <data android:pathPattern=".*\\.IP2" />
+                <data android:pathPattern=".*\\.IP3" />
+                <data android:pathPattern=".*\\.IP4" />
+                <data android:pathPattern=".*\\.IP5" />
+                <data android:pathPattern=".*\\.IP6" />
+                <data android:pathPattern=".*\\.IP7" />
+                <data android:pathPattern=".*\\.IP8" />
+                <data android:pathPattern=".*\\.ra1" />
+                <data android:pathPattern=".*\\.ra2" />
+                <data android:pathPattern=".*\\.ra3" />
+                <data android:pathPattern=".*\\.ra4" />
+                <data android:pathPattern=".*\\.ra5" />
+                <data android:pathPattern=".*\\.ra6" />
+                <data android:pathPattern=".*\\.ra7" />
+                <data android:pathPattern=".*\\.ra8" />
+                <data android:pathPattern=".*\\.RA1" />
+                <data android:pathPattern=".*\\.RA2" />
+                <data android:pathPattern=".*\\.RA3" />
+                <data android:pathPattern=".*\\.RA4" />
+                <data android:pathPattern=".*\\.RA5" />
+                <data android:pathPattern=".*\\.RA6" />
+                <data android:pathPattern=".*\\.RA7" />
+                <data android:pathPattern=".*\\.RA8" />
+                <data android:pathPattern=".*\\.ri1" />
+                <data android:pathPattern=".*\\.ri2" />
+                <data android:pathPattern=".*\\.ri3" />
+                <data android:pathPattern=".*\\.ri4" />
+                <data android:pathPattern=".*\\.ri5" />
+                <data android:pathPattern=".*\\.ri6" />
+                <data android:pathPattern=".*\\.ri7" />
+                <data android:pathPattern=".*\\.ri8" />
+                <data android:pathPattern=".*\\.RI1" />
+                <data android:pathPattern=".*\\.RI2" />
+                <data android:pathPattern=".*\\.RI3" />
+                <data android:pathPattern=".*\\.RI4" />
+                <data android:pathPattern=".*\\.RI5" />
+                <data android:pathPattern=".*\\.RI6" />
+                <data android:pathPattern=".*\\.RI7" />
+                <data android:pathPattern=".*\\.RI8" />
+            </intent-filter>
+            <!-- Most file managers pass content:// URIs without the file name, typed by
+                 extension; Android knows none of the AUC extensions, so they arrive as generic
+                 binary files. AUCDataTool is then offered for unknown binary files in general. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
             <meta-data
                 android:name="android.app.lib_name"
                 android:value="-- %%INSERT_APP_LIB_NAME%% --" />

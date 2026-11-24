@@ -16,6 +16,7 @@ Item {
     readonly property alias transitionPlot: transitionView.plot
     readonly property alias sweepPlot: sweepView.plot
     readonly property alias sweepSpeedPlot: sweepSpeedView.plot
+    signal plotActivated(var plot)
 
     Label {
         anchors.centerIn: parent
@@ -58,6 +59,7 @@ Item {
                     yLabel: qsTr("Interval to next scan, any cell (s)")
                     placeholder: qsTr("Interval to the next scan")
                     markers: root.controller.timingSkipMarkers
+                    onActivated: root.plotActivated(plot)
                     Flow {
                         anchors.left: parent.left
                         anchors.right: parent.right
@@ -90,6 +92,7 @@ Item {
                     placeholder: qsTr("Intervals by cell transition")
                     yTickLabels: root.controller.timingTransitionTicks
                     annotations: root.controller.timingTransitionNotes
+                    onActivated: root.plotActivated(plot)
                     Component.onCompleted: plot.xAxis.log = true
                 }
             }
@@ -108,6 +111,7 @@ Item {
                     xLabel: qsTr("Radius (cm)")
                     yLabel: qsTr("Time since sweep start (s)")
                     placeholder: qsTr("Sweep logs (.tr)")
+                    onActivated: root.plotActivated(plot)
                     Label {
                         anchors.left: parent.left
                         anchors.right: parent.right
@@ -132,6 +136,7 @@ Item {
                     yLabel: qsTr("Rotor speed during sweeps (rpm)")
                     placeholder: qsTr("Rotor speed")
                     markers: root.controller.timingSkipMarkers
+                    onActivated: root.plotActivated(plot)
                 }
             }
 
@@ -165,7 +170,11 @@ Item {
                             placeholder: qsTr("Fewer than two scans")
                             markers: root.controller.timingSkipMarkers
                             annotations: modelData.notes
+                            onActivated: root.plotActivated(plot)
                             Component.onCompleted: root.controller.setTimingCellPlot(index, plot)
+                            // A replacement delegate may already have registered this index.
+                            Component.onDestruction: if (root.controller && root.controller.timingCellPlot(index) === plot)
+                                                         root.controller.setTimingCellPlot(index, null)
                             Label {
                                 anchors.right: parent.right
                                 anchors.top: parent.top

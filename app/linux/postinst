@@ -8,10 +8,13 @@ set -e
 P=/opt/AUCDataTool
 ID=io.github.doluk.AUCDataTool
 ICONS=/usr/share/icons/hicolor/scalable/apps
-mkdir -p /usr/bin /usr/share/applications "$ICONS"
+MIME=/usr/share/mime/packages
+mkdir -p /usr/bin /usr/share/applications "$ICONS" "$MIME"
 ln -sf "$P/bin/AUCDataTool" /usr/bin/AUCDataTool
 ln -sf "$P/share/applications/$ID.desktop" "/usr/share/applications/$ID.desktop"
 ln -sf "$P/share/icons/hicolor/scalable/apps/$ID.svg" "$ICONS/$ID.svg"
+ln -sf "$P/share/mime/packages/$ID.xml" "$MIME/$ID.xml"
+if command -v update-mime-database >/dev/null 2>&1; then update-mime-database /usr/share/mime >/dev/null 2>&1 || true; fi
 if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database -q /usr/share/applications || true; fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true; fi
 exit 0

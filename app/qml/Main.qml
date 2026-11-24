@@ -25,12 +25,58 @@ ApplicationWindow {
     readonly property bool darkScheme: Application.styleHints.colorScheme === Qt.ColorScheme.Dark
     palette.base: darkScheme ? "#2a2a2a" : undefined
 
-    // Exposed for main.cpp (command-line files, benchmark).
+    // Exposed for main.cpp (command-line files, benchmark, update check).
     property alias controller: ctrl
+    property alias updateChecker: updater
     property alias mainPlot: scanView.plot
     /// 0 scans, 1 run conditions, 2 3D surface, 3 scan timing (main.cpp --view)
     property alias viewIndex: viewTabs.currentIndex
     property real lastProcessMs: 0
+    /// Plot currently targeted by the Options panel's Grid and Curves controls.
+    property ScanPlot selectedPlot: null
+    property int timingPlotRev: 0
+    readonly property var tabPlots: {
+        // Re-evaluate when cell timing plots register or timing data changes.
+        void win.timingPlotRev
+        if (viewTabs.currentIndex === 0) {
+            let list = [{ label: qsTr("Scans"), plot: scanView.plot }]
+            if (ctrl.showSpectrum && ctrl.hasSpectra)
+                list.push({ label: qsTr("Spectra"), plot: spectrumView.plot })
+            if (ctrl.integrate)
+                list.push({ label: qsTr("Radial integral"), plot: integralView.plot })
+            return list
+        }
+        if (viewTabs.currentIndex === 1) {
+            return [
+                { label: qsTr("Rotor speed"), plot: runView.speedPlot },
+                { label: qsTr("Temperature"), plot: runView.temperaturePlot },
+                { label: qsTr("ω²t"), plot: runView.omega2tPlot }
+            ]
+        }
+        if (viewTabs.currentIndex === 3 && ctrl.hasScanTiming) {
+            let list = [
+                { label: qsTr("Interval to next scan"), plot: timingView.timingPlot },
+                { label: qsTr("Cell transitions"), plot: timingView.transitionPlot }
+            ]
+            if (ctrl.timingHasSweeps) {
+                list.push({ label: qsTr("Detector sweeps"), plot: timingView.sweepPlot })
+                list.push({ label: qsTr("Sweep rotor speed"), plot: timingView.sweepSpeedPlot })
+            }
+            for (let i = 0; i < ctrl.timingCells.length; ++i) {
+                const cp = ctrl.timingCellPlot(i)
+                if (cp) list.push({ label: ctrl.timingCells[i].title, plot: cp })
+            }
+            return list
+        }
+        return []
+    }
+    readonly property ScanPlot activeStylePlot: {
+        if (win.selectedPlot) {
+            for (const entry of win.tabPlots)
+                if (entry.plot === win.selectedPlot) return win.selectedPlot
+        }
+        return win.tabPlots.length > 0 ? win.tabPlots[0].plot : null
+    }
     readonly property bool isAndroid: Qt.platform.os === "android"
     /// Phone layout (e.g. 412 × 915 dp portrait, 915 × 412 landscape): plots use the full
     /// window, channel list and options open as drawers, actions sit in a menu.
@@ -58,6 +104,17 @@ ApplicationWindow {
         onCurrentIndexChanged: channelDrawer.close()
         // Scan timing exists only for absorbance/intensity data (not interference, fluorescence).
         onDatasetChanged: if (!hasScanTiming && viewTabs.currentIndex === 3) viewTabs.currentIndex = 0
+        onTimingPlotsChanged: win.timingPlotRev++
+        onScanTimingChanged: win.timingPlotRev++
+    }
+
+    UpdateChecker {
+        id: updater
+        onReadyToQuitForUpdate: Qt.quit()
+    }
+    UpdateDialog {
+        id: updateDialog
+        updater: updater
     }
 
     // Grabs the visible graph area (scan/spectrum/integral plots or the 3D surface).
@@ -137,8 +194,8 @@ ApplicationWindow {
 
     Shortcut { sequences: [StandardKey.Open]; onActivated: win.openFilesDialog() }
     Shortcut { sequences: [StandardKey.Print]; enabled: ctrl.canPrint && ctrl.scanCount > 0; onActivated: win.grabGraph(r => ctrl.printImage(r.image, ctrl.runInfo)) }
-    Shortcut { sequence: "Esc"; onActivated: scanView.plot.selectedCurve = -1 }
-    Shortcut { sequence: "F1"; onActivated: scanView.plot.autoscale() }  // same key as the LabVIEW viewer
+    Shortcut { sequence: "Esc"; onActivated: { const p = win.activeStylePlot ?? scanView.plot; if (p) p.selectedCurve = -1 } }
+    Shortcut { sequence: "F1"; onActivated: { const p = win.activeStylePlot ?? scanView.plot; if (p) p.autoscale() } }  // same key as the LabVIEW viewer
     Shortcut { sequences: ["Ctrl+Right", "PgUp"]; onActivated: ctrl.stepWavelength(1) }
     Shortcut { sequences: ["Ctrl+Left", "PgDown"]; onActivated: ctrl.stepWavelength(-1) }
 
@@ -168,6 +225,11 @@ ApplicationWindow {
         }
         MenuSeparator {}
         MenuItem { text: qsTr("Close all channels"); enabled: ctrl.channels.length > 0; onTriggered: ctrl.closeAll() }
+        MenuSeparator {}
+        MenuItem {
+            text: updater.updateAvailable ? qsTr("Update to %1…").arg(updater.latestVersion) : qsTr("Check for updates…")
+            onTriggered: updateDialog.open()
+        }
     }
 
     header: ToolBar {
@@ -214,7 +276,11 @@ ApplicationWindow {
                 Layout.preferredWidth: 32
                 Layout.preferredHeight: 32
             }
-            IconButton { glyph: "fit"; enabled: scanView.plot.hasData; onClicked: scanView.plot.autoscale() }
+            IconButton {
+                glyph: "fit"
+                enabled: (win.activeStylePlot ?? scanView.plot).hasData
+                onClicked: (win.activeStylePlot ?? scanView.plot).autoscale()
+            }
             IconButton { glyph: "tune"; onClicked: optionsDrawer.open() }
             IconButton { id: moreButton; glyph: "more"; onClicked: actionsMenu.popup(moreButton, moreButton.width - actionsMenu.width, moreButton.height) }
         }
@@ -268,13 +334,58 @@ ApplicationWindow {
             ActionGroup {
                 ToolButton {
                     text: qsTr("Autoscale")
-                    enabled: scanView.plot.hasData
-                    onClicked: scanView.plot.autoscale()
+                    enabled: (win.activeStylePlot ?? scanView.plot).hasData
+                    onClicked: (win.activeStylePlot ?? scanView.plot).autoscale()
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Fit the axes to the data (F1, double-click)")
                 }
             }
             Item { Layout.fillWidth: true }
+            ActionGroup {
+                ToolButton {
+                    text: updater.updateAvailable ? qsTr("Update %1…").arg(updater.latestVersion) : qsTr("Updates…")
+                    highlighted: updater.updateAvailable
+                    onClicked: updateDialog.open()
+                    ToolTip.visible: hovered
+                    ToolTip.text: updater.updateAvailable
+                                  ? qsTr("AUCDataTool %1 is available (installed: %2)").arg(updater.latestVersion, updater.currentVersion)
+                                  : qsTr("AUCDataTool %1 – check for updates").arg(updater.currentVersion)
+                }
+            }
+        }
+
+        // Unobtrusive notification banner when a newer release is available.
+        Rectangle {
+            visible: updater.bannerVisible
+            Layout.fillWidth: true
+            implicitHeight: bannerRow.implicitHeight + 10
+            color: win.darkScheme ? "#1e3a5f" : "#dbeafe"
+            border.color: win.darkScheme ? "#3b82f6" : "#93c5fd"
+            border.width: 1
+            RowLayout {
+                id: bannerRow
+                anchors.fill: parent
+                anchors.leftMargin: 10
+                anchors.rightMargin: 6
+                spacing: 8
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("AUCDataTool %1 is available (installed: %2).").arg(updater.latestVersion, updater.currentVersion)
+                    color: win.darkScheme ? "#eff6ff" : "#1e3a8a"
+                }
+                Button {
+                    text: qsTr("Update…")
+                    highlighted: true
+                    onClicked: updateDialog.open()
+                }
+                ToolButton {
+                    text: "✕"
+                    onClicked: updater.dismissBanner()
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Dismiss")
+                }
+            }
         }
 
         // … and the views as tabs on their own row, with the current channel's run info.
@@ -384,6 +495,7 @@ ApplicationWindow {
             PlotView {
                 id: scanView
                 curvesSelectable: true
+                onActivated: win.selectedPlot = plot
                 SplitView.fillHeight: true
                 SplitView.minimumHeight: 200
                 xLabel: ctrl.xLabel
@@ -458,6 +570,7 @@ ApplicationWindow {
                 id: spectrumView
                 visible: ctrl.showSpectrum && ctrl.hasSpectra
                 curvesSelectable: true
+                onActivated: win.selectedPlot = plot
                 SplitView.preferredHeight: 260
                 SplitView.minimumHeight: 140
                 xLabel: qsTr("Wavelength (nm)")
@@ -487,6 +600,7 @@ ApplicationWindow {
             PlotView {
                 id: integralView
                 visible: ctrl.integrate
+                onActivated: win.selectedPlot = plot
                 SplitView.preferredHeight: 230
                 SplitView.minimumHeight: 140
                 xLabel: qsTr("Time (min)")
@@ -498,6 +612,7 @@ ApplicationWindow {
         RunConditionsView {
             id: runView
             controller: ctrl
+            onPlotActivated: (p) => win.selectedPlot = p
         }
 
         Loader {
@@ -510,6 +625,7 @@ ApplicationWindow {
         ScanTimingView {
             id: timingView
             controller: ctrl
+            onPlotActivated: (p) => win.selectedPlot = p
         }
         }
 
@@ -546,7 +662,9 @@ ApplicationWindow {
                     OptionsPanel {
                         width: parent.width
                         controller: ctrl
-                        plot: scanView.plot
+                        plot: win.activeStylePlot
+                        plotChoices: win.tabPlots
+                        onPlotSelected: (p) => win.selectedPlot = p
                         compact: win.compact
                     }
                 }

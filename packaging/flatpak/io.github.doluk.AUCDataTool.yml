@@ -13,6 +13,7 @@ command: AUCDataTool
 
 finish-args:
   - --share=ipc
+  - --share=network  # GitHub Releases update check
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri

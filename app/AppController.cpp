@@ -30,6 +30,9 @@
 
 namespace {
 
+/// Curve id of the median linear fit in the detector sweep plot (sweep curves use their index).
+constexpr int kSweepFitCurveId = 1000000;
+
 /// File system path for a dialog URL. On Android the native dialogs return content:// URIs;
 /// documents on shared storage are mapped to their path (readable with "All files access"),
 /// so that sibling files (*.mwrs.xml, other scans of a run) can be found. Other content URIs
@@ -423,7 +426,7 @@ void AppController::setCurrentIndex(int i)
     if (i >= 0) initSettings(i);
     if (m_scanPlot) {
         m_scanPlot->setSelectedCurve(-1);
-        m_scanPlot->setCurveStyles(i >= 0 ? m_entries[i].view.curveStyles : QHash<int, CurveStyle>{});
+        m_scanPlot->setCurveStyles(i >= 0 ? m_entries[i].view.curveStyles : QHash<int, QVariantMap>{});
     }
     emit currentIndexChanged();
     emit datasetChanged();
@@ -907,6 +910,8 @@ AppController::Result AppController::runProcessing(Job job)
         }
         is->y.push_back(std::move(y));
         is->colors.push_back(QColor(0x1d, 0x4e, 0xd8));
+        is->ids.push_back(0);
+        is->labels.push_back(o.radialWeight ? tr("∫A·r dr") : tr("∫A dr"));
         is->computeBounds();
         res.integral = is;
     }
@@ -1306,9 +1311,16 @@ void AppController::updateRunPlots()
     // Rotor speed, temperature and ω²t of every scan against time, from the scan headers
     // (no readings needed, so done on the GUI thread).
     const auc::ChannelSource* c = currentSrc();
-    auto set = [](ScanPlot* p, PlotSeriesPtr series, const QHash<int, CurveStyle>& styles) {
+    CurveStyle points;
+    points.marker = CurveStyle::Circle;
+    points.markerSize = 5.0f;
+    CurveStyle dashed;
+    dashed.line = CurveStyle::Dash;
+    dashed.width = 1.5f;
+    auto set = [&](ScanPlot* p, PlotSeriesPtr series, const QHash<int, CurveStyle>& baseStyles) {
         if (!p) return;
-        p->setCurveStyles(styles);
+        p->initDefaultStyle(points);
+        p->setBaseCurveStyles(baseStyles);
         p->setSeries(std::move(series), false);
     };
     if (!c || c->scans.empty()) {
@@ -1351,18 +1363,12 @@ void AppController::updateRunPlots()
         s->computeBounds();
         return PlotSeriesPtr(s);
     };
-    CurveStyle points;
-    points.marker = CurveStyle::Circle;
-    points.markerSize = 5.0f;
-    CurveStyle dashed;
-    dashed.line = CurveStyle::Dash;
-    dashed.width = 1.5f;
 
     // Speed: measured, and the set speed where the format stores it.
     Curves speedCurves{{measured, QColor(0x1d, 0x4e, 0xd8)}};
     if (hasSet) speedCurves.push_back({setSpeed, QColor(0x9c, 0xa3, 0xaf)});
-    set(m_speedPlot, series(std::move(speedCurves), {tr("measured"), tr("set")}), {{0, points}, {1, dashed}});
-    set(m_temperaturePlot, series({{temp, QColor(0xdc, 0x26, 0x26)}}, {tr("temperature")}), {{0, points}});
+    set(m_speedPlot, series(std::move(speedCurves), {tr("measured"), tr("set")}), {{1, dashed}});
+    set(m_temperaturePlot, series({{temp, QColor(0xdc, 0x26, 0x26)}}, {tr("temperature")}), {});
 
     // ω²t with the straight line ω²·(t − t₀) through the scans at constant speed.
     const auc::proc::Omega2tFit fit = auc::proc::fitOmega2t(seconds, w2t, rpm);
@@ -1391,7 +1397,7 @@ void AppController::updateRunPlots()
         if (logSweeps == 0) {
             Curves w2tCurves{{w2tf, QColor(0x05, 0x96, 0x69)}};
             if (fit.valid) w2tCurves.push_back({line, QColor(0x6b, 0x72, 0x80)});
-            set(m_omega2tPlot, series(std::move(w2tCurves), {tr("ω²t"), tr("fit")}), {{0, points}, {1, dashed}});
+            set(m_omega2tPlot, series(std::move(w2tCurves), {tr("ω²t"), tr("fit")}), {{1, dashed}});
         } else {
             std::stable_sort(pts.begin(), pts.end(), [](const Pt& a, const Pt& b) { return a.t < b.t; });
             constexpr float fnan = std::numeric_limits<float>::quiet_NaN();
@@ -1414,7 +1420,7 @@ void AppController::updateRunPlots()
             s->computeBounds();
             CurveStyle logLine;
             logLine.width = 1.5f;
-            set(m_omega2tPlot, s, {{0, points}, {1, dashed}, {2, logLine}});
+            set(m_omega2tPlot, s, {{1, dashed}, {2, logLine}});
         }
     }
 
@@ -1513,14 +1519,21 @@ void AppController::setSweepSpeedPlot(ScanPlot* p)
 
 void AppController::setTimingCellPlot(int index, ScanPlot* plot)
 {
-    m_timingCellPlots[index] = plot;
+    if (plot) m_timingCellPlots[index] = plot;
+    else m_timingCellPlots.remove(index);
+    emit timingPlotsChanged();
     if (!plot) return;
     CurveStyle s;
     s.marker = CurveStyle::Circle;
     s.markerSize = 3.5f;
-    plot->setCurveStyles({{0, s}});
+    plot->initDefaultStyle(s);
     plot->setSeries(index >= 0 && std::size_t(index) < m_timing.cellSeries.size() ? m_timing.cellSeries[std::size_t(index)] : nullptr,
                     false);
+}
+
+ScanPlot* AppController::timingCellPlot(int index) const
+{
+    return m_timingCellPlots.value(index);
 }
 
 void AppController::updateScanTiming(bool force)
@@ -1835,7 +1848,7 @@ void AppController::updateScanTiming(bool force)
                 for (std::size_t j = 0; j < np; ++j) fitY[j] = float(off + b * (rad[j] - rad.front()));
                 sw->y.push_back(std::move(fitY));
                 sw->colors.push_back(QColor(0x37, 0x41, 0x51));
-                sw->ids.push_back(-1);
+                sw->ids.push_back(kSweepFitCurveId);
                 sw->labels.push_back(tr("linear fit (median)"));
                 fitText = tr("linear fit: %1 s per radial position (Δr %2 cm, %3 s/cm; per sweep %4–%5 s) · R² %6 (min %7) · rms %8 s")
                               .arg(b * step, 0, 'f', 4)
@@ -1865,28 +1878,26 @@ void AppController::updateScanTiming(bool force)
         }
     }
 
-    auto markersOnly = [](float size, std::size_t count) {
+    auto markersOnly = [](float size) {
         CurveStyle s;
         s.marker = CurveStyle::Circle;
         s.markerSize = size;
         s.line = CurveStyle::NoLine;
-        QHash<int, CurveStyle> styles;
-        for (std::size_t k = 0; k < count; ++k) styles.insert(int(k), s);
-        return styles;
+        return s;
     };
     if (m_timingPlot) {
-        m_timingPlot->setCurveStyles(markersOnly(4.0f, m_timing.interleaved ? m_timing.interleaved->y.size() : 0));
+        m_timingPlot->initDefaultStyle(markersOnly(4.0f));
         m_timingPlot->setSeries(m_timing.interleaved, keep);
     }
     if (m_transitionPlot) {
-        m_transitionPlot->setCurveStyles(markersOnly(3.0f, m_timing.transitions ? m_timing.transitions->y.size() : 0));
+        m_transitionPlot->initDefaultStyle(markersOnly(3.0f));
         m_transitionPlot->setSeries(m_timing.transitions, keep);
     }
     if (m_sweepPlot) {
         CurveStyle fitStyle;
         fitStyle.line = CurveStyle::Dash;
         fitStyle.width = 2.0f;
-        m_sweepPlot->setCurveStyles({{-1, fitStyle}});
+        m_sweepPlot->setBaseCurveStyles({{kSweepFitCurveId, fitStyle}});
         m_sweepPlot->setSeries(m_timing.sweeps, keep);
     }
     if (m_sweepSpeedPlot) m_sweepSpeedPlot->setSeries(m_timing.sweepSpeed, keep);

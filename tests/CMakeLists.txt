@@ -19,3 +19,21 @@ auc_add_test(tst_folderwatcher)
 auc_add_test(tst_mwl)
 auc_add_test(tst_xl)
 auc_add_test(tst_scantiming)
+
+# UpdateInfo is header-only (Qt Core) so it also runs with -DAUC_BUILD_APP=OFF.
+auc_add_test(tst_updateinfo)
+target_include_directories(tst_updateinfo PRIVATE ${PROJECT_SOURCE_DIR}/app)
+
+if(AUC_BUILD_APP)
+    find_package(Qt6 REQUIRED COMPONENTS Quick)
+    add_executable(tst_plotstyle
+        tst_plotstyle.cpp
+        ${PROJECT_SOURCE_DIR}/app/ScanPlot.h
+        ${PROJECT_SOURCE_DIR}/app/ScanPlot.cpp
+        ${PROJECT_SOURCE_DIR}/app/PlotAxis.h
+    )
+    target_include_directories(tst_plotstyle PRIVATE ${PROJECT_SOURCE_DIR}/app)
+    target_link_libraries(tst_plotstyle PRIVATE Qt6::Quick Qt6::Test)
+    add_test(NAME tst_plotstyle COMMAND tst_plotstyle)
+    set_tests_properties(tst_plotstyle PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()

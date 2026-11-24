@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Lukas Dobler
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #include "AppController.h"
+#include "FileOpenRouter.h"
 #include "ScanPlot.h"
+#include "UpdateChecker.h"
 
 #include "auc/AucFile.h"
 
@@ -10,6 +12,7 @@
 #include <QFileInfo>
 #include <QElapsedTimer>
 #include <QGuiApplication>
+#include <QLockFile>
 #ifdef AUC_HAVE_PRINT
 #include <QApplication>
 #endif
@@ -81,6 +84,20 @@ void requestStorageAccess()
 }
 #endif
 
+#ifdef Q_OS_ANDROID
+/// Returns the URI from an ACTION_VIEW launch intent (tapping an AUC file in a file manager).
+QUrl androidLaunchIntentUri()
+{
+    QJniObject activity = QNativeInterface::QAndroidApplication::context();
+    if (!activity.isValid()) return {};
+    const QJniObject intent = activity.callObjectMethod("getIntent", "()Landroid/content/Intent;");
+    if (!intent.isValid()) return {};
+    const QJniObject uri = intent.callObjectMethod("getDataString", "()Ljava/lang/String;");
+    QJniEnvironment().checkAndClearExceptions();
+    return uri.isValid() && !uri.toString().isEmpty() ? QUrl(uri.toString()) : QUrl();
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -95,6 +112,8 @@ int main(int argc, char** argv)
     app.setApplicationVersion(QStringLiteral(PROJECT_VERSION));
     // Wayland app id: matches the installed .desktop file (launcher icon, taskbar grouping).
     QGuiApplication::setDesktopFileName(QStringLiteral("io.github.doluk.AUCDataTool"));
+    FileOpenRouter fileRouter;
+    app.installEventFilter(&fileRouter);
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Viewer for analytical ultracentrifugation data"));
@@ -134,6 +153,18 @@ int main(int argc, char** argv)
         else if (s == QLatin1String("light")) app.styleHints()->setColorScheme(Qt::ColorScheme::Light);
     }
 
+    // A plain launch (files only, e.g. from a file manager) hands its files to a running
+    // instance; with options (export, screenshot, noise files, ...) every launch is separate.
+    const bool plainLaunch = parser.optionNames().isEmpty();
+#ifndef Q_OS_ANDROID
+    if (plainLaunch) {
+        QLockFile lock(FileOpenRouter::lockFilePath());
+        lock.tryLock(3000);  // on timeout go on unlocked rather than not starting
+        if (FileOpenRouter::forwardToRunningInstance(parser.positionalArguments())) return 0;
+        fileRouter.listen();
+    }
+#endif
+
 #ifdef Q_OS_ANDROID
     QQuickStyle::setStyle(QStringLiteral("Material"));
     requestStorageAccess();
@@ -153,7 +184,18 @@ int main(int argc, char** argv)
     auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     auto* controller = window->property("controller").value<AppController*>();
     if (controller) {
-        controller->openPaths(parser.positionalArguments());
+        fileRouter.setController(controller, window);
+        if (plainLaunch) {
+            // Batched with files forwarded by processes started at the same time.
+            QList<QUrl> urls;
+            for (const QString& f : parser.positionalArguments()) urls << QUrl::fromLocalFile(QFileInfo(f).absoluteFilePath());
+            fileRouter.add(urls);
+        } else {
+            controller->openPaths(parser.positionalArguments());
+        }
+#ifdef Q_OS_ANDROID
+        if (const QUrl intentUri = androidLaunchIntentUri(); intentUri.isValid()) fileRouter.add({intentUri});
+#endif
         if (parser.isSet(watchOpt)) controller->openFolder(QUrl::fromLocalFile(parser.value(watchOpt)), true);
         if (parser.isSet(tiOpt)) controller->loadNoise(QUrl::fromLocalFile(parser.value(tiOpt)), true);
         if (parser.isSet(riOpt)) controller->loadNoise(QUrl::fromLocalFile(parser.value(riOpt)), false);
@@ -162,6 +204,13 @@ int main(int argc, char** argv)
             if (eq <= 0 || !controller->setProperty(kv.left(eq).toUtf8().constData(), kv.mid(eq + 1)))
                 std::fprintf(stderr, "unknown option: %s\n", qPrintable(kv));
         }
+    }
+
+    const bool interactive = !parser.isSet(benchOpt) && !parser.isSet(exportOpt)
+                          && !parser.isSet(saveGraphOpt) && !parser.isSet(shotOpt);
+    if (interactive) {
+        if (auto* updater = window->property("updateChecker").value<UpdateChecker*>())
+            QTimer::singleShot(1500, updater, [updater] { updater->checkForUpdates(false); });
     }
 
     if (parser.isSet(benchOpt)) {

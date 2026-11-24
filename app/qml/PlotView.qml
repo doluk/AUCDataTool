@@ -22,8 +22,10 @@ Item {
     /// [{ value, label }] – replaces the numeric y tick labels (e.g. category rows); null: numeric.
     property var yTickLabels: null
     signal markerMoved(string key, real value)
+    /// Emitted when the user interacts with this plot so the Options panel can target it.
+    signal activated()
     /// Left click selects the curve under the cursor (plot.selectedCurve).
-    property bool curvesSelectable: false
+    property bool curvesSelectable: true
     /// Finger input: wider marker grips; long press + drag draws the zoom box.
     readonly property bool touchUi: Qt.platform.os === "android" || Qt.platform.os === "ios"
 
@@ -207,20 +209,24 @@ Item {
         y: plot.y + plot.height / 2 - height / 2
     }
 
-    // Axis scales, limits and autoscaling, in the free corner below the y labels.
+    // Axis scales, limits, autoscaling and curve styles, in the free corner below the y labels.
     ToolButton {
         id: axesButton
         x: 2
         y: plot.y + plot.height + 4
         width: root.leftMargin - 8
         height: root.bottomMargin - 8
-        text: qsTr("Axes")
-        font.pixelSize: 11
+        padding: 2
+        text: qsTr("Axes /\nStyle")
+        font.pixelSize: 10
         checked: axesPopup.opened
         // A press outside the popup already closed it: this click must not reopen it.
-        onClicked: if (!axesPopup.closedJustNow()) axesPopup.open()
+        onClicked: {
+            root.activated()
+            if (!axesPopup.closedJustNow()) axesPopup.open()
+        }
         ToolTip.visible: hovered
-        ToolTip.text: qsTr("Linear/log scale, limits and continuous autoscale")
+        ToolTip.text: qsTr("Axes (scale, limits, autoscale), grid and curve styles")
     }
     AxisSettings {
         id: axesPopup
@@ -281,6 +287,7 @@ Item {
         }
 
         onPressed: (e) => {
+            root.activated()
             last = Qt.point(e.x, e.y)
             start = last
             // Right-drag or Ctrl+left-drag (Cmd on macOS): zoom box instead of pan.

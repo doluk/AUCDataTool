@@ -34,6 +34,12 @@
   <launchable type="desktop-id">io.github.doluk.AUCDataTool.desktop</launchable>
   <provides>
     <binary>AUCDataTool</binary>
+    <mediatype>application/x-auc-openauc</mediatype>
+    <mediatype>application/x-auc-mw</mediatype>
+    <mediatype>application/x-auc-mwrs</mediatype>
+    <mediatype>application/x-auc-beckman-ip</mediatype>
+    <mediatype>application/x-auc-beckman-ra</mediatype>
+    <mediatype>application/x-auc-beckman-ri</mediatype>
   </provides>
 
   <url type="homepage">https://github.com/doluk/AUCDataTool</url>
@@ -63,6 +69,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.2.2" date="2026-11-24">
+      <description>
+        <p>Update notifications with one-click download, file associations for .auc, .mw, .mwrs and Beckman XL scan files, and line and marker styles for every plot.</p>
+      </description>
+    </release>
     <release version="0.2.1" date="2026-11-23">
       <description>
         <p>Linux: packages for older distributions (glibc 2.28), native Wayland, a launcher and an icon. Windows: application icon.</p>

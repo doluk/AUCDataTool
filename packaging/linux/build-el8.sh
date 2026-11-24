@@ -58,15 +58,17 @@ echo "newest symbol versions: GLIBC_$glibc GLIBCXX_$glibcxx"
 [ "$(printf '%s\n2.28\n' "$glibc" | sort -V | tail -n1)" = "2.28" ] || { echo "needs glibc > 2.28"; exit 1; }
 [ "$(printf '%s\n3.4.25\n' "$glibcxx" | sort -V | tail -n1)" = "3.4.25" ] || { echo "needs GLIBCXX > 3.4.25"; exit 1; }
 
-# Both platform plugins: Wayland (with the xdg-shell integration) and X11.
+# Both platform plugins: Wayland (with the xdg-shell integration) and X11; TLS for the
+# update check.
 for p in platforms/libqxcb.so platforms/libqwayland-generic.so platforms/libqwayland-egl.so \
-         wayland-shell-integration/libxdg-shell.so; do
+         wayland-shell-integration/libxdg-shell.so tls/libqopensslbackend.so; do
     find "$check" -path "*/plugins/$p" | grep . > /dev/null || { echo "missing plugin $p"; exit 1; }
 done
 
 # Desktop integration in the packages.
 dpkg-deb -c "$BUILD"/package/*.deb | grep 'share/applications/io.github.doluk.AUCDataTool.desktop' > /dev/null
 dpkg-deb -c "$BUILD"/package/*.deb | grep 'share/icons/hicolor/scalable/apps/io.github.doluk.AUCDataTool.svg' > /dev/null
+dpkg-deb -c "$BUILD"/package/*.deb | grep 'share/mime/packages/io.github.doluk.AUCDataTool.xml' > /dev/null
 dpkg-deb -I "$BUILD"/package/*.deb postinst | grep 'ln -sf' > /dev/null
 rpm -qp --scripts "$BUILD"/package/*.rpm | grep 'ln -sf' > /dev/null
 ls -l "$BUILD"/package/

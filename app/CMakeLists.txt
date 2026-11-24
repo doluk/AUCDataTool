@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Lukas Dobler
 # SPDX-License-Identifier: LGPL-3.0-or-later
 
-find_package(Qt6 REQUIRED COMPONENTS Gui Quick QuickControls2 Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Gui Quick QuickControls2 Concurrent Network)
 
 # Optional: Qt Graphs for the 3D surface view, Qt Print Support (with Widgets, for the
 # print dialog) for printing. Without them the app builds without these features.
@@ -39,9 +39,11 @@ set(auc_qml_files
     qml/RunConditionsView.qml
     qml/IconButton.qml
     qml/AxisSettings.qml
+    qml/PlotStylePanel.qml
     qml/ScanTimingView.qml
     qml/OptionSection.qml
     qml/PinButton.qml
+    qml/UpdateDialog.qml
 )
 set(auc_sources
     AppController.h AppController.cpp
@@ -51,6 +53,9 @@ set(auc_sources
     SurfaceGrid.h
     CurveStyle.h
     Colormap.h Colormap.cpp
+    UpdateInfo.h
+    UpdateChecker.h UpdateChecker.cpp
+    FileOpenRouter.h FileOpenRouter.cpp
 )
 set(auc_qml_dependencies QtQuick)
 if(AUC_HAVE_GRAPHS)
@@ -74,7 +79,15 @@ target_link_libraries(aucdatatool PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
     Qt6::Concurrent
+    Qt6::Network
 )
+if(ANDROID)
+    # FileOpenRouter: QtAndroidPrivate::registerNewIntentListener (files opened while running).
+    if(NOT TARGET Qt6::CorePrivate)
+        find_package(Qt6 REQUIRED COMPONENTS CorePrivate)
+    endif()
+    target_link_libraries(aucdatatool PRIVATE Qt6::CorePrivate)
+endif()
 if(AUC_HAVE_GRAPHS)
     target_compile_definitions(aucdatatool PRIVATE AUC_HAVE_GRAPHS)
     target_link_libraries(aucdatatool PRIVATE Qt6::Graphs)
@@ -89,6 +102,7 @@ set_target_properties(aucdatatool PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER de.uni-konstanz.coelfen.aucdatatool
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/macos/Info.plist.in"
 )
 
 # Android: an APK via `cmake --build build --target apk` with Qt for Android (qt-cmake).
@@ -137,6 +151,8 @@ if(UNIX AND NOT APPLE)
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES linux/io.github.doluk.AUCDataTool.svg
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+    install(FILES linux/io.github.doluk.AUCDataTool.xml
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/mime/packages)
     install(FILES linux/io.github.doluk.AUCDataTool.metainfo.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 endif()
@@ -157,6 +173,13 @@ if(AUC_DEPLOY_QT)
                 Qt6::QWaylandIntegrationPlugin Qt6::QWaylandEglPlatformIntegrationPlugin)
         else()
             message(WARNING "Qt WaylandClient not found: the bundle runs on X11/XWayland only")
+        endif()
+        # HTTPS for the update check: deploy the OpenSSL TLS backend explicitly (Qt loads the
+        # system's libssl at run time; without it the manual check says HTTPS is unavailable).
+        if(TARGET Qt6::QTlsBackendOpenSSLPlugin)
+            qt_import_plugins(aucdatatool INCLUDE Qt6::QTlsBackendOpenSSLPlugin)
+        else()
+            message(WARNING "Qt OpenSSL TLS backend not found: the update check needs HTTPS")
         endif()
     endif()
     # Qt 6.4 names the output argument FILENAME_VARIABLE (OUTPUT_SCRIPT since 6.5).

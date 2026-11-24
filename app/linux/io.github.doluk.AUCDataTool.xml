@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Lukas Dobler -->
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later -->
+<!-- Shared MIME-info definitions for AUC raw data files. Globs without case-sensitive="true"
+     are matched case-insensitively per the freedesktop spec, covering both .ipX/.raX/.riX and
+     .IPX/.RAX/.RIX (X = 1..8). -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-auc-openauc">
+    <comment>openAUC data file</comment>
+    <generic-icon name="io.github.doluk.AUCDataTool"/>
+    <magic priority="60">
+      <match type="string" offset="0" value="UCDA"/>
+    </magic>
+    <glob pattern="*.auc"/>
+  </mime-type>
+
+  <mime-type type="application/x-auc-mw">
+    <comment>Multi-wavelength AUC scan (.mw)</comment>
+    <generic-icon name="io.github.doluk.AUCDataTool"/>
+    <glob pattern="*.mw"/>
+  </mime-type>
+
+  <mime-type type="application/x-auc-mwrs">
+    <comment>Multi-wavelength AUC scan (.mwrs)</comment>
+    <generic-icon name="io.github.doluk.AUCDataTool"/>
+    <glob pattern="*.mwrs"/>
+  </mime-type>
+
+  <mime-type type="application/x-auc-beckman-ip">
+    <comment>Beckman XL interference scan</comment>
+    <generic-icon name="io.github.doluk.AUCDataTool"/>
+    <glob pattern="*.ip1"/>
+    <glob pattern="*.ip2"/>
+    <glob pattern="*.ip3"/>
+    <glob pattern="*.ip4"/>
+    <glob pattern="*.ip5"/>
+    <glob pattern="*.ip6"/>
+    <glob pattern="*.ip7"/>
+    <glob pattern="*.ip8"/>
+  </mime-type>
+
+  <mime-type type="application/x-auc-beckman-ra">
+    <comment>Beckman XL absorbance scan</comment>
+    <generic-icon name="io.github.doluk.AUCDataTool"/>
+    <glob pattern="*.ra1"/>
+    <glob pattern="*.ra2"/>
+    <glob pattern="*.ra3"/>
+    <glob pattern="*.ra4"/>
+    <glob pattern="*.ra5"/>
+    <glob pattern="*.ra6"/>
+    <glob pattern="*.ra7"/>
+    <glob pattern="*.ra8"/>
+  </mime-type>
+
+  <mime-type type="application/x-auc-beckman-ri">
+    <comment>Beckman XL intensity scan</comment>
+    <generic-icon name="io.github.doluk.AUCDataTool"/>
+    <glob pattern="*.ri1"/>
+    <glob pattern="*.ri2"/>
+    <glob pattern="*.ri3"/>
+    <glob pattern="*.ri4"/>
+    <glob pattern="*.ri5"/>
+    <glob pattern="*.ri6"/>
+    <glob pattern="*.ri7"/>
+    <glob pattern="*.ri8"/>
+  </mime-type>
+</mime-info>

@@ -448,12 +448,28 @@ int ScanPlot::curveIndex(int id) const
     return m_idIndex.value(id, -1);
 }
 
-CurveStyle ScanPlot::resolvedStyle(std::size_t c) const
+CurveStyle ScanPlot::activeDefaultStyle() const
 {
-    CurveStyle s = m_overrides.value(curveId(c), m_defaultStyle);
+    CurveStyle s = m_baseDefaultStyle.merged(m_defaultChanges);
+    s.color = QColor();  // default curves always take the series/colormap colour
+    return s;
+}
+
+CurveStyle ScanPlot::inheritedStyle(std::size_t c) const
+{
+    const CurveStyle base = m_baseStyles.value(curveId(c), m_baseDefaultStyle);
+    CurveStyle s = base.merged(m_defaultChanges);
+    s.color = base.color;  // "All curves" never sets a colour
     if (!s.color.isValid())
         s.color = m_series && c < m_series->colors.size() ? m_series->colors[c] : QColor(Qt::black);
     return s;
+}
+
+CurveStyle ScanPlot::resolvedStyle(std::size_t c) const
+{
+    const CurveStyle s = inheritedStyle(c);
+    const auto it = m_overrides.constFind(curveId(c));
+    return it == m_overrides.cend() ? s : s.merged(it.value());
 }
 
 void ScanPlot::stylesEdited()
@@ -492,25 +508,56 @@ QVariantMap ScanPlot::curveInfo(int index) const
                        {QStringLiteral("visible"), s.visible}};
 }
 
-QVariantMap ScanPlot::selectedStyle() const
+QVariantMap ScanPlot::curveStyle(int id) const
 {
-    const int c = curveIndex(m_selected);
+    const int c = curveIndex(id);
     if (c < 0) return {};
     QVariantMap m = resolvedStyle(std::size_t(c)).toMap();
-    m.insert(QStringLiteral("custom"), m_overrides.contains(m_selected));
+    m.insert(QStringLiteral("custom"), m_overrides.contains(id));
     return m;
+}
+
+QVariantMap ScanPlot::selectedStyle() const
+{
+    return curveStyle(m_selected);
 }
 
 void ScanPlot::setDefaultStyleMap(const QVariantMap& changes)
 {
-    CurveStyle s = m_defaultStyle.merged(changes);
-    s.color = QColor();  // default curves always take the colormap colour
-    if (s == m_defaultStyle) return;
-    m_defaultStyle = s;
+    QVariantMap next = m_defaultChanges;
+    for (auto it = changes.cbegin(); it != changes.cend(); ++it) {
+        if (it.key() == QLatin1String("color")) continue;
+        next.insert(it.key(), it.value());
+    }
+    if (next == m_defaultChanges) return;
+    m_defaultChanges = std::move(next);
     stylesEdited();
 }
 
-void ScanPlot::setCurveStyles(const QHash<int, CurveStyle>& styles)
+void ScanPlot::initDefaultStyle(const CurveStyle& style)
+{
+    CurveStyle s = style;
+    s.color = QColor();
+    if (s == m_baseDefaultStyle) return;
+    m_baseDefaultStyle = s;
+    stylesEdited();
+}
+
+void ScanPlot::setBaseCurveStyles(const QHash<int, CurveStyle>& styles)
+{
+    if (styles == m_baseStyles) return;
+    m_baseStyles = styles;
+    stylesEdited();
+}
+
+void ScanPlot::resetDefaultStyle()
+{
+    if (m_defaultChanges.isEmpty()) return;
+    m_defaultChanges.clear();
+    stylesEdited();
+}
+
+void ScanPlot::setCurveStyles(const QHash<int, QVariantMap>& styles)
 {
     if (styles == m_overrides) return;
     m_overrides = styles;
@@ -521,11 +568,23 @@ void ScanPlot::setCurveStyle(int id, const QVariantMap& changes)
 {
     const int c = curveIndex(id);
     if (c < 0) return;
-    // A new individual style starts from what the curve looks like now, colour included.
-    const CurveStyle base = m_overrides.value(id, resolvedStyle(std::size_t(c)));
-    const CurveStyle s = base.merged(changes);
-    if (m_overrides.contains(id) && m_overrides.value(id) == s) return;
-    m_overrides.insert(id, s);
+    // Only the properties that differ from the inherited style are kept, so later "All
+    // curves" edits and colormap changes still reach every property the user did not set.
+    const CurveStyle inherited = inheritedStyle(std::size_t(c));
+    QVariantMap next = m_overrides.value(id);
+    for (auto it = changes.cbegin(); it != changes.cend(); ++it) {
+        if (inherited.merged({{it.key(), it.value()}}) == inherited) next.remove(it.key());
+        else next.insert(it.key(), it.value());
+    }
+    const auto it = m_overrides.constFind(id);
+    const bool had = it != m_overrides.cend();
+    if (next.isEmpty()) {
+        if (!had) return;
+        m_overrides.remove(id);
+    } else {
+        if (had && it.value() == next) return;
+        m_overrides.insert(id, next);
+    }
     stylesEdited();
 }
 

@@ -5,14 +5,15 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Auc.DataTool
 
-// Scale (linear/log) and limits of plot axes. A typed limit is locked: autoscaling keeps it
-// and only fits the free limits. Unlocking a limit lets it follow the data again.
+// Scale (linear/log), limits and (for 2D plots) grid and curve styles. A typed limit is
+// locked: autoscaling keeps it and only fits the free limits. Unlocking a limit lets it
+// follow the data again.
 Popup {
     id: root
     /// [{ title, axis: PlotAxis }]
     property var axes: []
-    /// 2D plot whose autoscale this panel controls; null for the 3D surface, whose free
-    /// limits always follow the data.
+    /// 2D plot whose autoscale and curve styles this panel controls; null for the 3D surface,
+    /// whose free limits always follow the data.
     property ScanPlot plot: null
     modal: false
     focus: true
@@ -23,6 +24,8 @@ Popup {
     function closedJustNow() { return Date.now() - closedAt < 300 }
     margins: 8
     padding: 10
+
+    readonly property real maxContentHeight: Overlay.overlay ? Math.max(200, Overlay.overlay.height - 48) : 520
 
     // Shows the axis limit; Enter/focus loss with an edited value locks it there.
     component LimitField: TextField {
@@ -54,72 +57,103 @@ Popup {
     contentItem: ColumnLayout {
         spacing: 6
 
-        RowLayout {
+        TabBar {
+            id: modeTabs
             visible: root.plot !== null
             Layout.fillWidth: true
-            CheckBox {
-                text: qsTr("Autoscale continuously")
-                checked: root.plot ? root.plot.autoscaleContinuous : false
-                onToggled: root.plot.autoscaleContinuous = checked
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Fit the free limits whenever the data changes, e.g. while dragging the offset marker")
-                Layout.fillWidth: true
-            }
-            Button {
-                text: qsTr("Autoscale")
-                enabled: root.plot ? root.plot.hasData : false
-                onClicked: root.plot.autoscale()
-            }
-        }
-        Label {
-            visible: root.plot === null
-            text: qsTr("Unlocked limits follow the data.")
-            opacity: 0.7
-            font.pixelSize: 11
+            TabButton { text: qsTr("Axes") }
+            TabButton { text: qsTr("Style") }
         }
 
-        Repeater {
-            model: root.axes
-            delegate: GridLayout {
-                id: axisRow
-                required property var modelData
-                readonly property PlotAxis axis: modelData.axis
-                columns: 3
-                columnSpacing: 8
-                rowSpacing: 2
-                Layout.fillWidth: true
-                Layout.topMargin: 6
+        ColumnLayout {
+            visible: root.plot === null || modeTabs.currentIndex === 0
+            Layout.fillWidth: true
+            spacing: 6
 
-                Label {
-                    text: axisRow.modelData.title
-                    font.bold: true
-                    elide: Text.ElideRight
+            RowLayout {
+                visible: root.plot !== null
+                Layout.fillWidth: true
+                CheckBox {
+                    text: qsTr("Autoscale continuously")
+                    checked: root.plot ? root.plot.autoscaleContinuous : false
+                    onToggled: root.plot.autoscaleContinuous = checked
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Fit the free limits whenever the data changes, e.g. while dragging the offset marker")
                     Layout.fillWidth: true
-                    Layout.maximumWidth: 180
                 }
-                ComboBox {
-                    model: [qsTr("Linear"), qsTr("Logarithmic")]
-                    currentIndex: axisRow.axis.log ? 1 : 0
-                    onActivated: (i) => axisRow.axis.log = i === 1
-                    implicitContentWidthPolicy: ComboBox.WidestText
-                    Layout.columnSpan: 2
-                    Layout.alignment: Qt.AlignRight
+                Button {
+                    text: qsTr("Autoscale")
+                    enabled: root.plot ? root.plot.hasData : false
+                    onClicked: root.plot.autoscale()
                 }
+            }
+            Label {
+                visible: root.plot === null
+                text: qsTr("Unlocked limits follow the data.")
+                opacity: 0.7
+                font.pixelSize: 11
+            }
 
-                Label { text: qsTr("Min") }
-                LimitField { axis: axisRow.axis; upper: false; Layout.fillWidth: true }
-                CheckBox {
-                    text: qsTr("Lock")
-                    checked: axisRow.axis.minLocked
-                    onToggled: axisRow.axis.minLocked = checked
+            Repeater {
+                model: root.axes
+                delegate: GridLayout {
+                    id: axisRow
+                    required property var modelData
+                    readonly property PlotAxis axis: modelData.axis
+                    columns: 3
+                    columnSpacing: 8
+                    rowSpacing: 2
+                    Layout.fillWidth: true
+                    Layout.topMargin: 6
+
+                    Label {
+                        text: axisRow.modelData.title
+                        font.bold: true
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                        Layout.maximumWidth: 180
+                    }
+                    ComboBox {
+                        model: [qsTr("Linear"), qsTr("Logarithmic")]
+                        currentIndex: axisRow.axis.log ? 1 : 0
+                        onActivated: (i) => axisRow.axis.log = i === 1
+                        implicitContentWidthPolicy: ComboBox.WidestText
+                        Layout.columnSpan: 2
+                        Layout.alignment: Qt.AlignRight
+                    }
+
+                    Label { text: qsTr("Min") }
+                    LimitField { axis: axisRow.axis; upper: false; Layout.fillWidth: true }
+                    CheckBox {
+                        text: qsTr("Lock")
+                        checked: axisRow.axis.minLocked
+                        onToggled: axisRow.axis.minLocked = checked
+                    }
+                    Label { text: qsTr("Max") }
+                    LimitField { axis: axisRow.axis; upper: true; Layout.fillWidth: true }
+                    CheckBox {
+                        text: qsTr("Lock")
+                        checked: axisRow.axis.maxLocked
+                        onToggled: axisRow.axis.maxLocked = checked
+                    }
                 }
-                Label { text: qsTr("Max") }
-                LimitField { axis: axisRow.axis; upper: true; Layout.fillWidth: true }
-                CheckBox {
-                    text: qsTr("Lock")
-                    checked: axisRow.axis.maxLocked
-                    onToggled: axisRow.axis.maxLocked = checked
-                }
+            }
+        }
+
+        ScrollView {
+            visible: root.plot !== null && modeTabs.currentIndex === 1
+            Layout.fillWidth: true
+            Layout.preferredWidth: 280
+            Layout.preferredHeight: Math.min(stylePanel.implicitHeight + 8, Math.max(180, root.maxContentHeight - modeTabs.implicitHeight - 16))
+            contentWidth: availableWidth
+            clip: true
+
+            PlotStylePanel {
+                id: stylePanel
+                width: parent.width
+                plot: root.plot
+                showGridToggle: true
+                listHeight: 140
             }
         }
     }

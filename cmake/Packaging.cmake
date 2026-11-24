@@ -27,6 +27,15 @@ if(WIN32)
     set(CPACK_NSIS_MUI_UNIICON "${PROJECT_SOURCE_DIR}/app/windows/AUCDataTool.ico")
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
     set(CPACK_NSIS_MODIFY_PATH OFF)
+    # Register .auc, .mw, .mwrs, .ip1-.ip8, .ra1-.ra8, .ri1-.ri8 (case-insensitive on Windows).
+    file(TO_NATIVE_PATH "${PROJECT_SOURCE_DIR}/app/windows/FileAssociations.nsh" _auc_nsis_assoc)
+    string(REPLACE "\\" "\\\\" _auc_nsis_assoc "${_auc_nsis_assoc}")
+    set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
+        "!include \\\"${_auc_nsis_assoc}\\\"
+         !insertmacro AUC_REGISTER_FILE_ASSOCIATIONS")
+    set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
+        "!include \\\"${_auc_nsis_assoc}\\\"
+         !insertmacro AUC_UNREGISTER_FILE_ASSOCIATIONS")
 elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
     set(CPACK_DMG_VOLUME_NAME "AUCDataTool")

@@ -53,6 +53,8 @@ class ScanPlot : public QQuickItem {
     Q_PROPERTY(int selectedIndex READ selectedIndex NOTIFY stylesChanged)
     /// True if any curve of the current series has an individual style.
     Q_PROPERTY(bool hasCustomStyles READ hasCustomStyles NOTIFY stylesChanged)
+    /// True if the user changed the plot's default ("All curves") style from its initial style.
+    Q_PROPERTY(bool hasCustomDefaultStyle READ hasCustomDefaultStyle NOTIFY stylesChanged)
     /// Incremented on every data or style change; bindings calling curveInfo() depend on it.
     Q_PROPERTY(int styleRevision READ styleRevision NOTIFY stylesChanged)
     /// Resolved style of the selected curve (empty map if none).
@@ -88,22 +90,32 @@ public:
     void setSelectedCurve(int id);
     int selectedIndex() const { return curveIndex(m_selected); }
     bool hasCustomStyles() const;
+    bool hasCustomDefaultStyle() const { return !m_defaultChanges.isEmpty(); }
     int styleRevision() const { return m_styleRevision; }
     /// { id, label, color, custom, visible } of the curve at `index`. Per row instead of one
     /// list for all curves: building and converting a list of every curve on each change
     /// cost O(curves) per list row, i.e. seconds for runs with > 1000 scans.
     Q_INVOKABLE QVariantMap curveInfo(int index) const;
+    Q_INVOKABLE QVariantMap curveStyle(int id) const;
     QVariantMap selectedStyle() const;
-    QVariantMap defaultStyleMap() const { return m_defaultStyle.toMap(); }
+    QVariantMap defaultStyleMap() const { return activeDefaultStyle().toMap(); }
     void setDefaultStyleMap(const QVariantMap& changes);
-    /// Individual styles, saved/restored per channel by the controller.
-    QHash<int, CurveStyle> curveStyles() const { return m_overrides; }
-    void setCurveStyles(const QHash<int, CurveStyle>& styles);
+    /// Sets the plot's built-in default style (e.g. circles with no line for scatter plots)
+    /// without marking it as a user override.
+    void initDefaultStyle(const CurveStyle& style);
+    /// Sets built-in per-curve initial styles (e.g. dashed fit lines) without marking them
+    /// as user overrides; user edits to "All curves" or individual curves layer on top.
+    void setBaseCurveStyles(const QHash<int, CurveStyle>& styles);
+    /// Individual styles (only the properties set per curve, see CurveStyle::toMap), saved
+    /// and restored per channel by the controller.
+    QHash<int, QVariantMap> curveStyles() const { return m_overrides; }
+    void setCurveStyles(const QHash<int, QVariantMap>& styles);
 
     /// Id of the visible curve nearest to the pixel position, −1 if none within a few px.
     Q_INVOKABLE int curveAt(double px, double py) const;
     /// Applies the keys of `changes` (see CurveStyle::toMap) to the curve's style.
     Q_INVOKABLE void setCurveStyle(int id, const QVariantMap& changes);
+    Q_INVOKABLE void resetDefaultStyle();
     Q_INVOKABLE void resetCurveStyle(int id);
     Q_INVOKABLE void resetCurveStyles();
 
@@ -145,6 +157,9 @@ private:
     void stylesEdited();
     int curveId(std::size_t c) const;
     int curveIndex(int id) const;
+    CurveStyle activeDefaultStyle() const;
+    /// Style of curve `c` without its individual changes (base style + "All curves" changes).
+    CurveStyle inheritedStyle(std::size_t c) const;
     CurveStyle resolvedStyle(std::size_t c) const;
     /// Index range [first, last) of x values inside [x0, x1] (whole range if x is not sorted).
     std::pair<std::size_t, std::size_t> visibleRange(double x0, double x1) const;
@@ -164,8 +179,10 @@ private:
     bool m_styledDirty = true;
     int m_xOrder = 0;  ///< 1 ascending, −1 descending, 0 unsorted
 
-    CurveStyle m_defaultStyle;
-    QHash<int, CurveStyle> m_overrides;
+    CurveStyle m_baseDefaultStyle;
+    QVariantMap m_defaultChanges;
+    QHash<int, CurveStyle> m_baseStyles;
+    QHash<int, QVariantMap> m_overrides;  ///< per curve id: the properties the user set
     int m_selected = -1;
     int m_styleRevision = 0;
     QHash<int, int> m_idIndex;  ///< curve id → index in the series
