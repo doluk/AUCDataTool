@@ -67,16 +67,20 @@ Linux packages:
 | Package | Built by | Notes |
 |---|---|---|
 | Flatpak (`.flatpak` bundle) | `packaging/flatpak/io.github.doluk.AUCDataTool.yml` | KDE runtime, sandboxed with access to home, `/media`, `/run/media` and `/mnt`; the runtime comes from Flathub |
-| `.deb`, `.rpm`, `.tar.gz` (Qt bundled) | `packaging/linux/build-el8.sh` in an AlmaLinux 8 container | glibc ≥ 2.28 (RHEL/Rocky/Alma 8, Debian 10, Ubuntu 18.10 and newer) |
+| `.deb`, `.rpm`, `.tar.gz` (Qt bundled) | `packaging/linux/build-el8.sh` in an AlmaLinux 8 container | glibc ≥ 2.28 (RHEL/Rocky/Alma 8, Debian 10, Ubuntu 18.10 and newer); Qt is built from source for this (`build-qt-el8.sh`), as Qt's own Linux binaries need glibc 2.34 |
 | Arch (`.pkg.tar.zst`, system Qt) | `cd packaging/arch && makepkg -s` | |
 
 All of them run natively on Wayland and on X11, and install a launcher
 (`io.github.doluk.AUCDataTool.desktop`), an icon and AppStream metadata. The `.deb`/`.rpm`
 link the launcher, icon and `/usr/bin/AUCDataTool` from `/opt/AUCDataTool` into `/usr`.
+The `.tar.gz` carries `install.sh` and `INSTALL.txt` (from `packaging/linux/tarball/`):
+`sudo ./install.sh` installs to `/opt/AUCDataTool` with links in `/usr/local`, `./install.sh`
+to `~/.local` for one user, `install.sh --uninstall` removes it; it also runs unpacked.
 
 ```sh
-# Bundled-Qt packages, locally with Docker (output in build-el8/package/)
-docker run --rm -v "$PWD":/src -w /src almalinux:8 bash packaging/linux/build-el8.sh
+# Bundled-Qt packages, locally with Docker (output in build-el8/package/); the volume keeps
+# the Qt build, which takes an hour or more the first time
+docker run --rm -v "$PWD":/src -v aucdatatool-qt:/opt/qt-el8 -w /src almalinux:8 bash packaging/linux/build-el8.sh
 # Flatpak
 flatpak-builder --user --install --force-clean build-flatpak packaging/flatpak/io.github.doluk.AUCDataTool.yml
 ```
@@ -86,8 +90,8 @@ Every release needs a `<release>` entry in `app/linux/io.github.doluk.AUCDataToo
 ### Android
 
 CI builds a signed APK for arm64-v8a (workflow artifact *AUCDataTool-Android*, attached to
-releases). Locally, with Qt 6.8 for Android (`android_arm64_v8a` plus the desktop Qt as host),
-Android SDK (platform 34), NDK r26b and JDK 17:
+releases). Locally, with Qt 6.12 for Android (`android_arm64_v8a` plus the desktop Qt as host),
+Android SDK (platform 36), NDK r27c and JDK 21:
 
 ```bash
 $QT_ANDROID/bin/qt-cmake -S . -B build-android -DCMAKE_BUILD_TYPE=Release \

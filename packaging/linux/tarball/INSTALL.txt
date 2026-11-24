@@ -1,0 +1,62 @@
+AUCDataTool for Linux (x86_64, Qt bundled)
+==========================================
+
+Runs on any distribution with glibc 2.28 or newer: RHEL/Rocky/Alma 8 and newer,
+Debian 10+, Ubuntu 20.04+, Fedora, openSUSE, ... On Wayland and on X11.
+
+Install
+-------
+
+Unpack the archive and run the install script from the unpacked folder:
+
+    tar -xzf AUCDataTool-*-Linux.tar.gz
+    cd AUCDataTool-*-Linux
+
+    sudo ./install.sh     # for all users: /opt/AUCDataTool, command in /usr/local/bin
+    ./install.sh          # only for you, no root needed: ~/.local/opt/AUCDataTool
+
+This adds AUCDataTool to the application menu, registers its file types (.auc, .mw,
+.mwrs, Beckman .ip/.ra/.ri) so they open with a double click, and adds the command
+AUCDataTool. Use --prefix DIR to put the application somewhere else.
+
+Running a newer install.sh over an existing installation updates it.
+
+Uninstall
+---------
+
+    sudo /opt/AUCDataTool/install.sh --uninstall           # system-wide installation
+    ~/.local/opt/AUCDataTool/install.sh --uninstall        # per-user installation
+
+Without installing
+------------------
+
+The unpacked folder runs as it is, from anywhere:
+
+    ./bin/AUCDataTool [files or folders]
+
+System libraries
+----------------
+
+Qt is bundled, but the graphics, font and windowing libraries come from the system.
+Desktop installations normally have them; install.sh lists any that are missing.
+
+  RHEL/Rocky/Alma, Fedora:
+    sudo dnf install libglvnd-opengl libglvnd-glx libglvnd-egl glib2 fontconfig freetype \
+        dbus-libs libxkbcommon-x11 libX11-xcb xcb-util-cursor xcb-util-wm xcb-util-image \
+        xcb-util-keysyms xcb-util-renderutil libwayland-client libwayland-cursor libwayland-egl
+    (on RHEL/Rocky/Alma 8 and 9, xcb-util-cursor is in EPEL: sudo dnf install epel-release)
+
+  Debian, Ubuntu:
+    sudo apt install libgl1 libegl1 libopengl0 libglib2.0-0 libfontconfig1 libfreetype6 \
+        libdbus-1-3 libxkbcommon-x11-0 libx11-xcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+        libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-sync1 \
+        libxcb-xfixes0 libxcb-xinerama0 libxcb-xkb1 libwayland-client0 libwayland-cursor0 \
+        libwayland-egl1
+
+Optional:
+  - Update check: needs OpenSSL 3 (libssl.so.3). Present on current
+    distributions; on RHEL/Rocky/Alma 8 install openssl3-libs from EPEL.
+  - Printing: needs CUPS (cups-libs / libcups2).
+
+The .deb and .rpm packages from the same release install the same application with
+these dependencies resolved by the package manager.

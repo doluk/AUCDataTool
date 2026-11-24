@@ -3,39 +3,44 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
 # Builds, tests and packages the Linux installers (.deb, .rpm, .tar.gz with bundled Qt) on
-# AlmaLinux 8 (glibc 2.28, the baseline of Qt's own Linux binaries), so they run on
-# RHEL/Rocky/Alma 8 and every newer distribution. gcc-toolset links the newer C++ runtime
-# parts statically, so the system libstdc++ of GCC 8 is enough.
+# AlmaLinux 8 (glibc 2.28), so they run on RHEL/Rocky/Alma 8 and every newer distribution.
+# Qt is built from source here (build-qt-el8.sh): Qt's own Linux binaries need glibc 2.34.
+# gcc-toolset links the newer C++ runtime parts statically, so GCC 8's libstdc++ is enough.
 #
-# From the repository root:
-#   docker run --rm -v "$PWD":/src -w /src almalinux:8 bash packaging/linux/build-el8.sh
+# From the repository root (the volume keeps the Qt build, which takes an hour or more):
+#   docker run --rm -v "$PWD":/src -v aucdatatool-qt:/opt/qt-el8 -w /src almalinux:8 \
+#       bash packaging/linux/build-el8.sh
 # Output: build-el8/package/. JOBS limits parallel compile jobs (memory).
+# `build-el8.sh qt` only builds Qt (CI caches it separately).
 set -euo pipefail
 
-QT_SERIES=${QT_SERIES:-6.8}  # newest open-source patch release of it
+export QT_VERSION=${QT_VERSION:-6.12.1}
+export QT_PREFIX=${QT_PREFIX:-/opt/qt-el8/$QT_VERSION}
 BUILD=${BUILD:-build-el8}
 
 dnf -y -q install epel-release dnf-plugins-core
 dnf config-manager --set-enabled powertools
 dnf -y -q install gcc-toolset-13-gcc-c++ gcc-toolset-13-binutils \
-    python3.11 python3.11-pip rpm-build dpkg desktop-file-utils file findutils \
-    mesa-libGL-devel mesa-libEGL-devel libxkbcommon-devel libxkbcommon-x11 fontconfig freetype \
-    dbus-libs libX11 libX11-xcb libxcb xcb-util-cursor xcb-util-wm xcb-util-image \
-    xcb-util-keysyms xcb-util-renderutil wayland-devel libwayland-cursor libwayland-egl
+    python3.11 python3.11-pip rpm-build dpkg desktop-file-utils file findutils xz \
+    mesa-libGL-devel mesa-libEGL-devel mesa-libgbm-devel libdrm-devel \
+    libxkbcommon-devel libxkbcommon-x11-devel fontconfig-devel freetype-devel dbus-devel \
+    glib2-devel cups-devel zlib-devel openssl3-devel at-spi2-core-devel \
+    libX11-devel libxcb-devel xcb-util-devel xcb-util-cursor-devel xcb-util-wm-devel \
+    xcb-util-image-devel xcb-util-keysyms-devel xcb-util-renderutil-devel libXrender-devel \
+    wayland-devel libwayland-cursor libwayland-egl
 
 # A current CMake and Ninja (EL8 ships CMake 3.26, Ninja only in PowerTools).
-python3.11 -m pip install -q aqtinstall cmake ninja
+python3.11 -m pip install -q cmake ninja
 export PATH=/usr/local/bin:$PATH
 cmake --version | head -n1
-QT_VERSION=${QT_VERSION:-$(python3.11 -m aqt list-qt linux desktop --spec "$QT_SERIES" --latest-version)}
-echo "Qt $QT_VERSION"
-python3.11 -m aqt install-qt linux desktop "$QT_VERSION" linux_gcc_64 \
-    -m qtgraphs qtquick3d qtshadertools -O /opt/qt > /dev/null
-QT=/opt/qt/$QT_VERSION/gcc_64
+
+bash "$(dirname "$0")/build-qt-el8.sh"
+[ "${1:-}" = qt ] && exit 0
+QT=$QT_PREFIX
 
 export CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
 # lib, not EL's lib64: Qt's plugins find their libraries at ../../lib as shipped. With
-# another directory Qt 6.8 rewrites their runtime paths, outside the CPack staging tree.
+# another directory Qt rewrites their runtime paths, outside the CPack staging tree.
 cmake -S . -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$QT" \
     -DCMAKE_INSTALL_LIBDIR=lib
 cmake --build "$BUILD" --parallel "${JOBS:-$(nproc)}"
@@ -58,9 +63,10 @@ echo "newest symbol versions: GLIBC_$glibc GLIBCXX_$glibcxx"
 [ "$(printf '%s\n2.28\n' "$glibc" | sort -V | tail -n1)" = "2.28" ] || { echo "needs glibc > 2.28"; exit 1; }
 [ "$(printf '%s\n3.4.25\n' "$glibcxx" | sort -V | tail -n1)" = "3.4.25" ] || { echo "needs GLIBCXX > 3.4.25"; exit 1; }
 
-# Both platform plugins: Wayland (with the xdg-shell integration) and X11; TLS for the
-# update check.
-for p in platforms/libqxcb.so platforms/libqwayland-generic.so platforms/libqwayland-egl.so \
+# Both platform plugins: Wayland (with the xdg-shell integration and EGL buffers) and X11;
+# TLS for the update check.
+for p in platforms/libqxcb.so platforms/libqwayland.so \
+         wayland-graphics-integration-client/libqt-plugin-wayland-egl.so \
          wayland-shell-integration/libxdg-shell.so tls/libqopensslbackend.so; do
     find "$check" -path "*/plugins/$p" | grep . > /dev/null || { echo "missing plugin $p"; exit 1; }
 done
